@@ -5,7 +5,7 @@ class StateRecord:
 
     def __init__(self, state_name: str,
                  trigger_time: float = 0,
-                 value: Optional[int] = None, 
+                 value: Optional[int] = None,
                  value_to_add: Optional[int] = None,
                  trigger_time_add: Optional[float] = None,
                  is_clear: bool = False,):
@@ -15,9 +15,12 @@ class StateRecord:
         self.state_name: str = state_name
         self.is_clear: bool = is_clear  # 是否清除状态
         self.trigger_time: float = trigger_time
-        self.trigger_time_add: float = trigger_time_add #时间修改
+        self.trigger_time_add: float = trigger_time_add  # 时间修改
         self.value: int = value
         self.value_add: int = value_to_add
+
+    def __str__(self):
+        return f"StateRecord(state_name='{self.state_name}', trigger_time={self.trigger_time:.2f}, value={self.value}, value_add={self.value_add})"
 
 
 class StateRecorder:
@@ -39,7 +42,7 @@ class StateRecorder:
         if record.trigger_time_add is None or record.trigger_time_add == 0:
             self.last_record_time = record.trigger_time
         else:
-            if self.last_record_time != -1: #如果是不存在的状态则不做任何处理
+            if self.last_record_time != -1:  #如果是不存在的状态则不做任何处理
                 self.last_record_time -= record.trigger_time_add
 
         if self.last_value is None:
@@ -59,6 +62,13 @@ class StateRecorder:
             # 原来没有出现过的话 就不重置
             return
         self.last_record_time = 0
+        self.last_value = None
+
+    def reset_to_initial(self) -> None:
+        """
+        重置状态到初始值，即从未触发过的状态
+        """
+        self.last_record_time = -1
         self.last_value = None
 
     def dispose(self) -> None:

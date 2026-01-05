@@ -6,7 +6,6 @@ from zzz_od.gui.view.battle_assistant.auto_battle_editor_interface import AutoBa
 from zzz_od.gui.view.battle_assistant.auto_battle_interface import AutoBattleInterface
 from zzz_od.gui.view.battle_assistant.dodge_assistant_interface import DodgeAssistantInterface
 from zzz_od.gui.view.battle_assistant.operation_debug_interface import OperationDebugInterface
-from zzz_od.gui.view.battle_assistant.template_generation_interface import TemplateGenerationInterface
 
 
 class BattleAssistantInterface(PivotNavigatorInterface):
@@ -18,7 +17,7 @@ class BattleAssistantInterface(PivotNavigatorInterface):
     def __init__(self, ctx: ZContext, parent=None):
         """
         初始化战斗助手界面。
-        
+
         :param ctx: 应用程序上下文，包含配置和状态信息。
         :param parent: 父组件，默认为 None。
         """
@@ -34,4 +33,3 @@ class BattleAssistantInterface(PivotNavigatorInterface):
         self.add_sub_interface(AutoBattleInterface(self.ctx))
         self.add_sub_interface(OperationDebugInterface(self.ctx))
         self.add_sub_interface(AutoBattleEditorInterface(self.ctx))
-        # self.add_sub_interface(TemplateGenerationInterface(self.ctx))

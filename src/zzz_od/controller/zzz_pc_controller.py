@@ -1,6 +1,7 @@
 import ctypes
-from cv2.typing import MatLike
 from typing import Optional
+
+from cv2.typing import MatLike
 
 from one_dragon.base.controller.pc_controller_base import PcControllerBase
 from one_dragon.utils import cv2_utils
@@ -11,12 +12,15 @@ from zzz_od.screen_area.screen_normal_world import ScreenNormalWorldEnum
 
 class ZPcController(PcControllerBase):
 
-    def __init__(self, game_config: GameConfig,
-                 win_title: str,
-                 standard_width: int = 1920,
-                 standard_height: int = 1080):
+    def __init__(
+            self,
+            game_config: GameConfig,
+            screenshot_method: str,
+            standard_width: int = 1920,
+            standard_height: int = 1080
+    ):
         PcControllerBase.__init__(self,
-                                  win_title=win_title,
+                                  screenshot_method=screenshot_method,
                                   standard_width=standard_width,
                                   standard_height=standard_height)
 
@@ -38,6 +42,7 @@ class ZPcController(PcControllerBase):
         self.key_chain_cancel: str = self.game_config.key_chain_cancel
 
         self.is_moving: bool = False  # 是否正在移动
+        self.turn_dx: float = game_config.turn_dx
 
     def fill_uid_black(self, screen: MatLike) -> MatLike:
         """
@@ -264,6 +269,18 @@ class ZPcController(PcControllerBase):
         """
         ctypes.windll.user32.mouse_event(0x0001, int(d), 0)
 
+    def turn_by_angle_diff(self, angle_diff: float) -> None:
+        """
+        按照给定角度偏移进行转向
+
+        Args:
+            angle_diff: 角度偏移 逆时针为正
+
+        Returns:
+            None
+        """
+        self.turn_by_distance(self.turn_dx * angle_diff)
+
     def lock(self, press: bool = False, press_time: Optional[float] = None, release: bool = False) -> None:
         """
         锁定敌人
@@ -301,3 +318,21 @@ class ZPcController(PcControllerBase):
         """
         self.is_moving = False
         self.move_w(release=True)
+
+    def turn_vertical_by_distance(self, d: float):
+        """
+        纵向转向 按距离转
+        :param d: 正数往下转 负数往上转
+        :return:
+        """
+        ctypes.windll.user32.mouse_event(0x0001, 0, int(d))
+
+    def move_mouse_relative(self, dx: float, dy: float):
+        """
+        相对移动鼠标
+        :param dx: 横向移动距离，正数向右
+        :param dy: 纵向移动距离，正数向下
+        """
+        if dx == 0 and dy == 0:
+            return
+        ctypes.windll.user32.mouse_event(0x0001, int(dx), int(dy))

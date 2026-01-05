@@ -1,4 +1,5 @@
 import base64
+import math
 import os
 from typing import Union, List, Optional, Tuple
 
@@ -20,7 +21,14 @@ def read_image(file_path: str) -> Optional[MatLike]:
     """
     if not os.path.exists(file_path):
         return None
-    image = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
+    file_type = get_image_file_type(file_path)
+
+    # 默认以BGR格式加载
+    if file_type == 'webp':
+        image = cv2.imread(file_path, cv2.IMREAD_COLOR)
+    else:
+        image = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
+
     if image.ndim == 2:
         return image
     elif image.ndim == 3:
@@ -39,12 +47,51 @@ def save_image(img: MatLike, file_path: str) -> None:
     """
     if img.ndim == 3:
         img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-    cv2.imwrite(file_path, img)
+
+    file_type = get_image_file_type(file_path)
+    if file_type == 'webp':  # 无损压缩保存
+        cv2.imwrite(file_path, img, [cv2.IMWRITE_WEBP_QUALITY, 100])
+    else:
+        cv2.imwrite(file_path, img)
 
 
-def show_image(img: MatLike,
-               rects: Union[MatchResult, MatchResultList] = None,
-               win_name: str = 'DEBUG', wait: Optional[int] = None, destroy_after: bool = False):
+def get_image_file_type(file_path: str) -> str:
+    """
+    从文件完整路径中提取文件类型
+
+    Args:
+        file_path: 文件路径
+
+    Returns:
+        str: 文件类型
+    """
+    return os.path.splitext(file_path)[1][1:]
+
+
+def show_image(
+        img: MatLike,
+        rects: Union[MatchResult, MatchResultList, list[Rect]] = None,
+        win_name: str = 'DEBUG',
+        wait: Optional[int] = None,
+        destroy_after: bool = False,
+        max_width: int | None = None,
+        max_height: int | None = None,
+):
+    """
+    显示一张图片
+    Args:
+        img: 图片
+        rects: 需要画出来的框
+        win_name: 显示图片的窗口名称
+        wait: 显示后等待按键的秒数 0=一直等待
+        destroy_after: 显示后销毁窗口
+        max_width: 显示的最大宽度，图片宽度超过这个宽度则等比例缩小
+        max_height: 显示的最大高度，图片高度超过这个高度则等比例缩小
+
+    Returns:
+
+    """
+
     """
     显示一张图片
     :param img: 图片
@@ -62,6 +109,19 @@ def show_image(img: MatLike,
         elif type(rects) == MatchResultList:
             for i in rects:
                 cv2.rectangle(to_show, (i.x, i.y), (i.x + i.w, i.y + i.h), (255, 0, 0), 1)
+        elif isinstance(rects, list):
+            for rect in rects:
+                if isinstance(rect, MatchResult):
+                    cv2.rectangle(to_show, (rect.x, rect.y), (rect.x + rect.w, rect.y + rect.h), (255, 0, 0), 1)
+                elif type(rect) == Rect:
+                    cv2.rectangle(to_show, (rect.x1, rect.y1), (rect.x2, rect.y2), (255, 0, 0), 1)
+
+    if max_width is not None and to_show.shape[1] > max_width:
+        scale = max_width / to_show.shape[1]
+        to_show = cv2.resize(to_show, (int(to_show.shape[1] * scale), int(to_show.shape[0] * scale)))
+    if max_height is not None and to_show.shape[0] > max_height:
+        scale = max_height / to_show.shape[0]
+        to_show = cv2.resize(to_show, (int(to_show.shape[1] * scale), int(to_show.shape[0] * scale)))
 
     cv2.imshow(win_name, to_show)
     if wait is not None:
@@ -132,7 +192,7 @@ def match_template(source: MatLike, template: MatLike, threshold,
     # 进行模板匹配
     # show_image(source, win_name='source')
     # show_image(template, win_name='template')
-    # show_image(mask, win_name='mask')
+    # show_image(mask, win_name='mask', wait=1)
     result = cv2.matchTemplate(source, template, cv2.TM_CCOEFF_NORMED, mask=mask)
 
     match_result_list = MatchResultList(only_best=only_best)
@@ -257,7 +317,13 @@ def color_similarity_2d(image, color):
     return cv2.subtract(255, cv2.add(positive, negative))
 
 
-def show_overlap(source, template, x, y, template_scale: float = 1, win_name: str = 'DEBUG', wait: int = 1):
+def show_overlap(
+        source, template, x, y, template_scale: float = 1,
+        win_name: str = 'DEBUG', wait: int = 1,
+        max_width: int | None = None,
+        max_height: int | None = None,
+        template_mask: MatLike | None = None,
+):
     to_show_source = source.copy()
 
     if template_scale != 1:
@@ -270,8 +336,10 @@ def show_overlap(source, template, x, y, template_scale: float = 1, win_name: st
     else:
         to_show_template = template
 
-    source_overlap_template(to_show_source, to_show_template, x, y)
-    show_image(to_show_source, win_name=win_name, wait=wait)
+    source_overlap_template(to_show_source, to_show_template, x, y, copy_img=False, template_mask=template_mask)
+    show_image(to_show_source, win_name=win_name, wait=wait,
+               max_width=max_width,
+               max_height=max_height,)
 
 
 def feature_detect_and_compute(img: MatLike, mask: Optional[MatLike] = None):
@@ -375,7 +443,7 @@ def feature_match_for_one(source_kp, source_desc, template_kp, template_desc,
     source_points = np.float32([source_kp[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)  # 原图的
 
     # 使用RANSAC算法估计模板位置和尺度
-    _, mask = cv2.findHomography(template_points, source_points, cv2.RANSAC, 5.0, mask=source_mask)
+    homography_matrix, mask = cv2.findHomography(template_points, source_points, cv2.RANSAC, 5.0, mask=source_mask)
     # 获取内点的索引 拿最高置信度的
     inlier_indices = np.where(mask.ravel() == 1)[0]
     if len(inlier_indices) == 0:  # mask 里没找到就算了 再用good_matches的结果也是很不准的
@@ -402,7 +470,22 @@ def feature_match_for_one(source_kp, source_desc, template_kp, template_desc,
     scaled_width = int(template_width * template_scale)
     scaled_height = int(template_height * template_scale)
 
-    return MatchResult(1, offset_x, offset_y, scaled_width, scaled_height, template_scale)
+    # 计算综合置信度
+    # 1. 内点比例 - RANSAC内点占总good_matches的比例
+    inlier_ratio = len(inlier_indices) / len(good_matches)
+    # 2. 距离因子 - 距离越小越好，但要处理0距离的情况
+    distance_factor = 1.0 / (1.0 + best_match.distance / 100.0) if best_match.distance > 0 else 1.0
+    # 3. 内点数量因子 - 内点越多越好
+    inlier_count_factor = min(1.0, len(inlier_indices) / 10.0)
+
+    confidence = (
+        0.4 * inlier_ratio +
+        0.4 * distance_factor +
+        0.2 * inlier_count_factor
+    )
+    confidence = np.clip(confidence, 0.0, 1.0)
+
+    return MatchResult(confidence, offset_x, offset_y, scaled_width, scaled_height, template_scale)
 
 
 def feature_match_for_multi(
@@ -476,8 +559,12 @@ def feature_match_for_multi(
     return match_result_list
 
 
-def connection_erase(mask: MatLike, threshold: int = 50, erase_white: bool = True,
-                     connectivity: int = 8) -> MatLike:
+def connection_erase(
+        mask: MatLike,
+        threshold: int = 50,
+        erase_white: bool = True,
+        connectivity: int = 8
+) -> MatLike:
     """
     通过连通性检测 消除一些噪点
     :param mask: 黑白图 掩码图
@@ -614,7 +701,7 @@ def convert_to_standard(origin, mask, width: int = 51, height: int = 51, bg_colo
     return final_origin, final_mask
 
 
-def source_overlap_template(source, template, x, y, copy_img: bool = False):
+def source_overlap_template(source, template, x, y, copy_img: bool = False, template_mask: MatLike | None = None):
     """
     在原图上覆盖模板图
     :param source: 原图
@@ -622,16 +709,27 @@ def source_overlap_template(source, template, x, y, copy_img: bool = False):
     :param x: 偏移量
     :param y: 偏移量
     :param copy_img: 是否复制新图片
+    :param template_mask: 模板图掩码
     :return:
     """
     to_overlap_source = source.copy() if copy_img else source
+    if template_mask is None:
+        template_mask = np.full_like(template, 255, dtype=np.uint8)
 
     rect1, rect2 = get_overlap_rect(source, template, x, y)
     sx_start, sy_start, sx_end, sy_end = rect1
     tx_start, ty_start, tx_end, ty_end = rect2
 
-    # 将覆盖图像放置到底图的指定位置
-    to_overlap_source[sy_start:sy_end, sx_start:sx_end] = template[ty_start:ty_end, tx_start:tx_end]
+    # 定义目标图像中的感兴趣区域 (ROI)
+    source_roi = to_overlap_source[sy_start:sy_end, sx_start:sx_end]
+    template_roi = template[ty_start:ty_end, tx_start:tx_end]
+    template_mask_roi = template_mask[ty_start:ty_end, tx_start:tx_end]
+
+    mask_condition = template_mask_roi > 0
+
+    # 使用布尔索引，只将模板中掩码为 True 的像素复制到 ROI。
+    # NumPy 会自动将这个二维的布尔掩码应用到三维的彩色图像上。
+    source_roi[mask_condition] = template_roi[mask_condition]
 
     return to_overlap_source
 
@@ -762,3 +860,334 @@ def color_in_range(img: MatLike, lower: List[int], upper: List[int],
         return part
     else:
         return connection_erase(part, noise_threshold)
+
+
+def color_in_hsv_range(
+        img: MatLike,
+        lower: List[int],
+        upper: List[int],
+        white_noise_threshold: Optional[int] = None,
+        black_noise_threshold: Optional[int] = None,
+) -> MatLike:
+    """
+    获取HSV颜色范围内的掩码
+
+    Args:
+        img: RGB图片
+        lower: HSV下限 (360, 100, 100)
+        upper: HSV上限 (360, 100, 100)
+        white_noise_threshold: 噪音阈值。传入时会消除连通量小于多少的白色块
+        black_noise_threshold: 噪音阈值。传入时会消除连通量小于多少的黑色块
+
+    Returns:
+        掩码
+    """
+    lower_range = np.array([
+        math.floor(lower[0] / 2.0),
+        math.floor(lower[1] * 255.0 / 100),
+        math.floor(lower[2] * 255.0 / 100),
+    ], dtype=np.uint8)
+    upper_range = np.array([
+        math.ceil(upper[0] / 2.0),
+        math.ceil(upper[1] * 255.0 / 100),
+        math.ceil(upper[2] * 255.0 / 100),
+    ], dtype=np.uint8)
+    hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    part = cv2.inRange(hsv_img, lower_range, upper_range)
+
+    if white_noise_threshold is not None:
+        part = connection_erase(part, white_noise_threshold, erase_white=True)
+    if black_noise_threshold is not None:
+        part = connection_erase(part, black_noise_threshold, erase_white=False)
+
+    return part
+
+
+def find_character_avatars(img: MatLike, min_area: int = 800,
+                          hsv_lower_bound: Tuple[int, int, int] = (0, 0, 0),
+                          hsv_upper_bound: Tuple[int, int, int] = (10, 10, 255)) -> List[Tuple[int, int, int, int]]:
+    """
+    在图像中查找角色头像的轮廓
+    使用HSV色彩空间过滤并通过连通区域检测找到头像位置
+
+    :param img: 输入图像 (RGB格式)
+    :param min_area: 最小有效区域面积，过滤小的噪点
+    :param hsv_lower_bound: HSV下界 (H, S, V)
+    :param hsv_upper_bound: HSV上界 (H, S, V)
+    :return: 角色头像边界框列表，每个元素为 (x, y, w, h)
+    """
+    # 转换到HSV色彩空间并过滤低饱和度和色调值
+    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+    mask = cv2.inRange(hsv, hsv_lower_bound, hsv_upper_bound)
+    binary = cv2.bitwise_not(mask)
+
+    # 查找连通区域
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # 过滤小面积区域并返回边界框
+    valid_contours = [cnt for cnt in contours if cv2.contourArea(cnt) >= min_area]
+
+    avatar_boxes = []
+    for cnt in valid_contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        avatar_boxes.append((x, y, w, h))
+
+    return avatar_boxes
+
+
+def find_character_avatar_center_with_offset(img: MatLike, area_offset: Tuple[int, int] = (0, 0),
+                                           click_offset: Tuple[int, int] = (0, 80),
+                                           min_area: int = 800,
+                                           hsv_lower_bound: Tuple[int, int, int] = (0, 0, 0),
+                                           hsv_upper_bound: Tuple[int, int, int] = (10, 10, 255)) -> Optional[Tuple[int, int]]:
+    """
+    查找第一个角色头像并返回带偏移的点击位置
+
+    :param img: 输入图像 (RGB格式)
+    :param area_offset: 区域偏移量 (x, y)，用于将相对坐标转换为绝对坐标
+    :param click_offset: 点击偏移量 (x, y)，相对于头像中心的偏移
+    :param min_area: 最小有效区域面积
+    :param hsv_lower_bound: HSV下界
+    :param hsv_upper_bound: HSV上界
+    :return: 点击位置 (x, y) 或 None
+    """
+    avatar_boxes = find_character_avatars(img, min_area, hsv_lower_bound, hsv_upper_bound)
+
+    if not avatar_boxes:
+        return None
+
+    # 选择第一个有效轮廓
+    x, y, w, h = avatar_boxes[0]
+
+    # 计算点击位置：轮廓中心加上偏移量
+    center_x = x + w // 2 + area_offset[0] + click_offset[0]
+    center_y = y + h // 2 + area_offset[1] + click_offset[1]
+
+    return (center_x, center_y)
+
+
+def filter_by_color(
+    image: MatLike,
+    mode: str,
+    lower_rgb: Optional[Union[List[int], Tuple[int, int, int], np.ndarray]] = None,
+    upper_rgb: Optional[Union[List[int], Tuple[int, int, int], np.ndarray]] = None,
+    hsv_color: Optional[Union[List[int], Tuple[int, int, int], np.ndarray]] = None,
+    hsv_diff: Optional[Union[List[int], Tuple[int, int, int], np.ndarray]] = None
+) -> MatLike:
+    """
+    根据指定的模式和颜色范围，对图像进行颜色过滤。
+    能正确处理HSV空间H通道的循环问题。
+    :param image:       待过滤的图像 (RGB格式)
+    :param mode:        颜色模式 'rgb' 或 'hsv'
+    :param lower_rgb:   RGB下限
+    :param upper_rgb:   RGB上限
+    :param hsv_color:   HSV基准颜色
+    :param hsv_diff:    HSV颜色容差
+    :return:            二值化的 mask 图像。白色为符合条件，黑色为不符合。
+    """
+    if mode == 'hsv':
+        if hsv_color is None or hsv_diff is None:
+            return np.full((image.shape[0], image.shape[1]), 0, dtype=np.uint8)
+
+        hsv_image = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+
+        _hsv_color = np.array(hsv_color, dtype=np.int32)
+        _hsv_diff = np.array(hsv_diff, dtype=np.int32)
+
+        lower_s = np.clip(_hsv_color[1] - _hsv_diff[1], 0, 255)
+        upper_s = np.clip(_hsv_color[1] + _hsv_diff[1], 0, 255)
+        lower_v = np.clip(_hsv_color[2] - _hsv_diff[2], 0, 255)
+        upper_v = np.clip(_hsv_color[2] + _hsv_diff[2], 0, 255)
+
+        lower_h = _hsv_color[0] - _hsv_diff[0]
+        upper_h = _hsv_color[0] + _hsv_diff[0]
+
+        if lower_h < 0:
+            # H值回绕到180附近
+            lower1 = np.array([lower_h + 180, lower_s, lower_v], dtype=np.uint8)
+            upper1 = np.array([179, upper_s, upper_v], dtype=np.uint8)
+            mask1 = cv2.inRange(hsv_image, lower1, upper1)
+
+            lower2 = np.array([0, lower_s, lower_v], dtype=np.uint8)
+            upper2 = np.array([upper_h, upper_s, upper_v], dtype=np.uint8)
+            mask2 = cv2.inRange(hsv_image, lower2, upper2)
+
+            mask = cv2.bitwise_or(mask1, mask2)
+        elif upper_h > 179:
+            # H值回绕到0附近
+            lower1 = np.array([lower_h, lower_s, lower_v], dtype=np.uint8)
+            upper1 = np.array([179, upper_s, upper_v], dtype=np.uint8)
+            mask1 = cv2.inRange(hsv_image, lower1, upper1)
+
+            lower2 = np.array([0, lower_s, lower_v], dtype=np.uint8)
+            upper2 = np.array([upper_h - 180, upper_s, upper_v], dtype=np.uint8)
+            mask2 = cv2.inRange(hsv_image, lower2, upper2)
+
+            mask = cv2.bitwise_or(mask1, mask2)
+        else:
+            # H值没有回绕
+            lower = np.array([lower_h, lower_s, lower_v], dtype=np.uint8)
+            upper = np.array([upper_h, upper_s, upper_v], dtype=np.uint8)
+            mask = cv2.inRange(hsv_image, lower, upper)
+
+        return mask
+    elif mode == 'rgb':
+        if lower_rgb is None or upper_rgb is None:
+            return np.full((image.shape[0], image.shape[1]), 0, dtype=np.uint8)
+
+        # cv2.inRange 需要 np.array
+        _lower_rgb = np.array(lower_rgb, dtype=np.uint8)
+        _upper_rgb = np.array(upper_rgb, dtype=np.uint8)
+        mask = cv2.inRange(image, _lower_rgb, _upper_rgb)
+        return mask
+    else:
+        # 未知模式，或者没有提供足够的参数，返回全黑的mask
+        return np.full((image.shape[0], image.shape[1]), 0, dtype=np.uint8)
+
+
+def get_hsv_range_in_rect(image: MatLike, left: int, top: int, right: int, bottom: int) -> dict:
+    """
+    获取矩形区域内所有像素的HSV范围
+    :param image: RGB格式的图像
+    :param left: 矩形左边界
+    :param top: 矩形上边界
+    :param right: 矩形右边界
+    :param bottom: 矩形下边界
+    :return: 包含HSV中心值、差值和范围的字典
+    """
+    if image is None or image.size == 0:
+        return None
+
+    # 确保坐标在图像范围内
+    height, width = image.shape[:2]
+    left = max(0, min(left, width - 1))
+    top = max(0, min(top, height - 1))
+    right = max(left + 1, min(right, width))
+    bottom = max(top + 1, min(bottom, height))
+
+    # 提取矩形区域
+    roi = image[top:bottom, left:right]
+
+    # 转换为HSV
+    hsv_roi = cv2.cvtColor(roi, cv2.COLOR_RGB2HSV)
+
+    # S、V通道保持原有的线性计算
+    s_min, v_min = np.min(hsv_roi[:, :, 1:], axis=(0, 1))
+    s_max, v_max = np.max(hsv_roi[:, :, 1:], axis=(0, 1))
+
+    # 使用双区间比较算法计算H通道的中心值和差值
+    h_values = hsv_roi[:, :, 0].flatten()
+    h_min = int(np.min(h_values))
+    h_max = int(np.max(h_values))
+
+    # 计算线性区间长度：[min, max]
+    linear_length = h_max - h_min
+
+    # 计算环形区间长度：[max, min]
+    circular_length = (180 - h_max) + h_min
+
+    if linear_length <= circular_length:
+        # 选择线性区间
+        h_center = (h_min + h_max) // 2
+        h_diff = linear_length // 2
+    else:
+        # 选择环形区间
+        # 环形区间的中心计算：从max开始，加上环形长度的一半
+        half_circular = circular_length // 2
+        h_center = h_max + half_circular
+        if h_center >= 180:
+            h_center -= 180  # 转换为0-179范围
+        h_diff = half_circular
+
+    # S和V通道保持线性计算
+    s_center = int((int(s_min) + int(s_max)) // 2)
+    v_center = int((int(v_min) + int(v_max)) // 2)
+    s_diff = int(s_max - s_min)
+    v_diff = int(v_max - v_min)
+
+    return {
+        'center_hsv': (int(h_center), int(s_center), int(v_center)),
+        'diff_hsv': (int(h_diff), int(s_diff), int(v_diff))
+    }
+
+
+def get_hsv_range_in_contour(image: MatLike, contour: np.ndarray) -> dict:
+    """
+    获取轮廓区域内所有像素的HSV范围
+    :param image: RGB格式的图像
+    :param contour: 轮廓点集
+    :return: 包含HSV中心值、差值和范围的字典
+    """
+    if image is None or image.size == 0 or contour is None or len(contour) == 0:
+        return None
+
+    # 创建与图像同样大小的掩码
+    mask = np.zeros(image.shape[:2], dtype=np.uint8)
+
+    # 在掩码上绘制填充的轮廓
+    cv2.drawContours(mask, [contour], -1, 255, -1)
+
+    # 转换为HSV
+    hsv_image = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+
+    # 只分析轮廓内的像素
+    masked_hsv = hsv_image[mask > 0]
+
+    if len(masked_hsv) == 0:
+        return None
+
+    # S、V通道保持原有的线性计算
+    s_min, v_min = np.min(masked_hsv[:, 1:], axis=0)
+    s_max, v_max = np.max(masked_hsv[:, 1:], axis=0)
+
+    # 使用双区间比较算法计算H通道的中心值和差值
+    h_values = masked_hsv[:, 0]
+    h_min = int(np.min(h_values))
+    h_max = int(np.max(h_values))
+
+    # 计算线性区间长度：[min, max]
+    linear_length = h_max - h_min
+
+    # 计算环形区间长度：[max, min]
+    circular_length = (180 - h_max) + h_min
+
+    if linear_length <= circular_length:
+        # 选择线性区间
+        h_center = (h_min + h_max) // 2
+        h_diff = linear_length // 2
+    else:
+        # 选择环形区间
+        # 环形区间的中心计算：从max开始，加上环形长度的一半
+        half_circular = circular_length // 2
+        h_center = h_max + half_circular
+        if h_center >= 180:
+            h_center -= 180  # 转换为0-179范围
+        h_diff = half_circular
+
+    # S和V通道保持线性计算
+    s_center = int((int(s_min) + int(s_max)) // 2)
+    v_center = int((int(v_min) + int(v_max)) // 2)
+    s_diff = int(s_max - s_min)
+    v_diff = int(v_max - v_min)
+
+    return {
+        'center_hsv': (int(h_center), int(s_center), int(v_center)),
+        'diff_hsv': (int(h_diff), int(s_diff), int(v_diff))
+    }
+
+
+def to_binary(img: MatLike, threshold: int = 127) -> MatLike:
+    """
+    将图像转换为二值化图像
+    Args:
+        img: 输入图像（可以是彩色或灰度图像）
+        threshold: 二值化阈值，默认为127
+    Returns:
+        二值化图像（单通道，只有0和255两个值）
+    """
+    if len(img.shape) == 3:  # 彩色图像
+        gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = img
+    _, binary = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
+    return binary

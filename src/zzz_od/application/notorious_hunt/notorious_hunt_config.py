@@ -1,9 +1,11 @@
 from enum import Enum
-from typing import Optional, List
+from typing import List, Optional
 
 from one_dragon.base.config.config_item import ConfigItem
 from one_dragon.base.config.yaml_config import YamlConfig
+from one_dragon.base.operation.application.application_config import ApplicationConfig
 from zzz_od.application.charge_plan.charge_plan_config import ChargePlanItem
+from zzz_od.application.notorious_hunt import notorious_hunt_const
 
 
 class NotoriousHuntLevelEnum(Enum):
@@ -23,13 +25,14 @@ class NotoriousHuntBuffEnum(Enum):
     BUFF_3 = ConfigItem('第三个BUFF', 3)
 
 
-class NotoriousHuntConfig(YamlConfig):
+class NotoriousHuntConfig(ApplicationConfig):
 
-    def __init__(self, instance_idx: Optional[int] = None):
-        YamlConfig.__init__(
+    def __init__(self, instance_idx: int, group_id: str):
+        ApplicationConfig.__init__(
             self,
-            module_name='notorious_hunt',
+            app_id=notorious_hunt_const.APP_ID,
             instance_idx=instance_idx,
+            group_id=group_id,
         )
 
         self.plan_list: List[ChargePlanItem] = []
@@ -39,7 +42,10 @@ class NotoriousHuntConfig(YamlConfig):
                 old_plan = ChargePlanItem(**plan_item)
                 # 1.4版本 快捷手册中的TAB名称改动 在这里做检测兼容
                 if old_plan.tab_name == '挑战':
-                    old_plan.tab_name = '作战'
+                    old_plan.tab_name = '训练'
+                # 2.5版本 恶名狩猎从作战迁移到训练
+                if old_plan.tab_name == '作战' and old_plan.category_name == '恶名狩猎':
+                    old_plan.tab_name = '训练'
                 self.plan_list.append(old_plan)
 
         existed_missions = [i.mission_type_name for i in self.plan_list]
@@ -54,11 +60,14 @@ class NotoriousHuntConfig(YamlConfig):
         默认的周本计划
         """
         return [
-            ChargePlanItem('作战', '恶名狩猎', '初生死路屠夫', None),
-            ChargePlanItem('作战', '恶名狩猎', '未知复合侵蚀体', None),
-            ChargePlanItem('作战', '恶名狩猎', '冥宁芙·双子', None),
-            ChargePlanItem('作战', '恶名狩猎', '「霸主侵蚀体·庞培」', None),
-            ChargePlanItem('作战', '恶名狩猎', '牲鬼·布林格', None)
+            ChargePlanItem('训练', '恶名狩猎', '初生死路屠夫', None),
+            ChargePlanItem('训练', '恶名狩猎', '未知复合侵蚀体', None),
+            ChargePlanItem('训练', '恶名狩猎', '冥宁芙·双子', None),
+            ChargePlanItem('训练', '恶名狩猎', '「霸主侵蚀体·庞培」', None),
+            ChargePlanItem('训练', '恶名狩猎', '牲鬼·布林格', None),
+            ChargePlanItem('训练', '恶名狩猎', '秽息司祭', None),
+            ChargePlanItem('训练', '恶名狩猎', '彷徨猎手', None),
+            ChargePlanItem('训练', '恶名狩猎', '魇缚者·叶释渊', None)
         ]
 
     def save(self):

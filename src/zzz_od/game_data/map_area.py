@@ -29,7 +29,6 @@ class MapAreaService:
         """
         self.area_list: List[MapArea] = []
         self.area_name_map: dict[str, MapArea] = {}
-        self.reload()
 
     def reload(self) -> None:
         """
@@ -58,7 +57,7 @@ class MapAreaService:
         :param ocr_result: OCR结果
         :return:
         """
-        target_list = [gt(area.area_name) for area in self.area_list]
+        target_list = [gt(area.area_name, 'game') for area in self.area_list]
         results = difflib.get_close_matches(ocr_result, target_list, n=1)
 
         if results is not None and len(results) > 0:
@@ -94,7 +93,7 @@ class MapAreaService:
         :return:
         """
         area = self.area_name_map[area_name]
-        target_list = [gt(tp) for tp in area.tp_list]
+        target_list = [gt(tp, 'game') for tp in area.tp_list]
         results = difflib.get_close_matches(ocr_result, target_list, n=1)
 
         if results is not None and len(results) > 0:

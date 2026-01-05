@@ -16,14 +16,12 @@ class GotoMenu(ZOperation):
         需要保证在任何情况下调用，都能前往菜单
         :param ctx:
         """
-        ZOperation.__init__(self, ctx, op_name=gt('前往菜单', 'ui'))
+        ZOperation.__init__(self, ctx, op_name=gt('前往菜单'))
 
     @operation_node(name='画面识别', is_start_node=True, node_max_retry_times=60)
-    def check_screen_and_run(self, screen: Optional[MatLike] = None) -> OperationRoundResult:
-        if screen is None:
-            screen = self.screenshot()
+    def check_screen_and_run(self) -> OperationRoundResult:
 
-        result = self.round_by_goto_screen(screen=screen, screen_name='菜单', retry_wait=None)
+        result = self.round_by_goto_screen(screen=self.last_screenshot, screen_name='菜单', retry_wait=None)
         if result.is_success:
             return self.round_success(result.status)
 
@@ -31,6 +29,10 @@ class GotoMenu(ZOperation):
                 and self.ctx.screen_loader.current_screen_name is not None  # 能识别到当前画面 说明能打开菜单
         ):
             return self.round_wait(result.status, wait=1)
+
+        mini_map = self.ctx.world_patrol_service.cut_mini_map(self.last_screenshot)
+        if mini_map.play_mask_found:
+            return self.round_success(status='发现地图')
 
         # 到这里说明无法自动从当前画面前往菜单 就先统一返回大世界
         op = BackToNormalWorld(self.ctx)

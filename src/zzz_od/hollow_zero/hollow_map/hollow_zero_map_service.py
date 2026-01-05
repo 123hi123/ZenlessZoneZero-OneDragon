@@ -1,7 +1,7 @@
 import time
+from typing import List, Optional
 
 from cv2.typing import MatLike
-from typing import List, Optional
 
 from one_dragon.utils.log_utils import log
 from zzz_od.context.zzz_context import ZContext
@@ -13,19 +13,19 @@ from zzz_od.yolo.hollow_event_detector import HollowEventDetector
 
 class HollowZeroMapService:
 
-    def __init__(self, ctx: ZContext):
+    def __init__(self, ctx: ZContext, data_service: HallowZeroDataService):
         self.ctx: ZContext = ctx
 
-        self.data_service: HallowZeroDataService = HallowZeroDataService()
+        self.data_service: HallowZeroDataService = data_service
         self.event_model: Optional[HollowEventDetector] = None
         self.map_list: List[HollowZeroMap] = []
 
     def init_event_yolo(self) -> None:
-        use_gpu = self.ctx.yolo_config.hollow_zero_event_gpu
+        use_gpu = self.ctx.model_config.hollow_zero_event_gpu
         if self.event_model is None or self.event_model.gpu != use_gpu:
             self.event_model = HollowEventDetector(
-                model_name=self.ctx.yolo_config.hollow_zero_event,
-                backup_model_name=self.ctx.yolo_config.hollow_zero_event_backup,
+                model_name=self.ctx.model_config.hollow_zero_event,
+                backup_model_name=self.ctx.model_config.hollow_zero_event_backup,
                 gh_proxy=self.ctx.env_config.is_gh_proxy,
                 gh_proxy_url=self.ctx.env_config.gh_proxy_url if self.ctx.env_config.is_gh_proxy else None,
                 personal_proxy=self.ctx.env_config.personal_proxy if self.ctx.env_config.is_personal_proxy else None,
@@ -101,19 +101,19 @@ class HollowZeroMapService:
 def __debug_cal_current_map_by_screen():
     ctx = ZContext()
     ctx.init_by_config()
-    ctx.ocr.init_model()
+    ctx.init_ocr()
     service = HollowZeroMapService(ctx)
     service.init_event_yolo()
 
     from one_dragon.utils import debug_utils
     screen = debug_utils.get_debug_image('_1733016932243')
     import time
-    ctx.hollow.init_before_hollow_start('旧都列车', '旧都列车-核心')
+    ctx.withered_domain.init_before_hollow_start('旧都列车', '旧都列车-核心')
     current_map = service.cal_current_map_by_screen(screen, time.time())
-    ctx.hollow.check_info_before_move(screen, current_map)
+    ctx.withered_domain.check_info_before_move(screen, current_map)
     from zzz_od.hollow_zero.hollow_map import hollow_pathfinding
-    hollow_pathfinding.search_map(current_map, ctx.hollow._get_avoid(), [])
-    target = ctx.hollow.get_next_to_move(current_map)
+    hollow_pathfinding.search_map(current_map, ctx.withered_domain._get_avoid(), [])
+    target = ctx.withered_domain.get_next_to_move(current_map)
     next_node_to_move = target.next_node_to_move
     from zzz_od.hollow_zero.hollow_runner import HollowRunner
     runner = HollowRunner(ctx)

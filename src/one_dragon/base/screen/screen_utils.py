@@ -1,73 +1,171 @@
-import cv2
-import numpy as np
-from cv2.typing import MatLike
+from __future__ import annotations
+
 from enum import Enum
-from typing import Optional, List
+from typing import TYPE_CHECKING
+
+from cv2.typing import MatLike
 
 from one_dragon.base.geometry.point import Point
-from one_dragon.base.operation.one_dragon_context import OneDragonContext
 from one_dragon.base.screen.screen_area import ScreenArea
 from one_dragon.base.screen.screen_info import ScreenInfo
 from one_dragon.utils import cv2_utils, str_utils
 from one_dragon.utils.i18_utils import gt
 
+if TYPE_CHECKING:
+    from one_dragon.base.operation.one_dragon_context import OneDragonContext
+
 
 class OcrClickResultEnum(Enum):
 
-    OCR_CLICK_SUCCESS: int = 1  # OCR并点击成功
-    OCR_CLICK_FAIL: int = 0  # OCR成功但点击失败 基本不会出现
-    OCR_CLICK_NOT_FOUND: int = -1  # OCR找不到目标
-    AREA_NO_CONFIG: int = -2  # 区域配置找不到
+    OCR_CLICK_SUCCESS = 1  # OCR并点击成功
+    OCR_CLICK_FAIL = 0  # OCR成功但点击失败 基本不会出现
+    OCR_CLICK_NOT_FOUND = -1  # OCR找不到目标
+    AREA_NO_CONFIG = -2  # 区域配置找不到
 
 
 class FindAreaResultEnum(Enum):
 
-    TRUE: int = 1  # 找到了
-    FALSE: int = 0  # 找不到
-    AREA_NO_CONFIG: int = -2  # 区域配置找不到
+    TRUE = 1  # 找到了
+    FALSE = 0  # 找不到
+    AREA_NO_CONFIG = -2  # 区域配置找不到
 
 
-def find_area(ctx: OneDragonContext, screen: MatLike, screen_name: str, area_name: str) -> FindAreaResultEnum:
+def find_area(
+    ctx: OneDragonContext,
+    screen: MatLike,
+    screen_name: str,
+    area_name: str,
+    crop_first: bool = True,
+) -> FindAreaResultEnum:
     """
     游戏截图中 是否能找到对应的区域
-    :param ctx: 上下文
-    :param screen: 游戏截图
-    :param screen_name: 画面名称
-    :param area_name: 区域名称
-    :return: 结果
+    Args:
+        ctx: 上下文
+        screen: 游戏截图
+        screen_name: 画面名称
+        area_name: 区域名称
+        crop_first: 在传入区域时 是否先裁剪再进行文本识别
+
+    Returns:
+        bool: 是否可以匹配到指定区域
     """
     area: ScreenArea = ctx.screen_loader.get_area(screen_name, area_name)
-    return find_area_in_screen(ctx, screen, area)
+    return find_area_in_screen(ctx, screen, area, crop_first)
 
 
-def find_area_in_screen(ctx: OneDragonContext, screen: MatLike, area: ScreenArea) -> FindAreaResultEnum:
+def find_area_binary(
+    ctx: OneDragonContext,
+    screen: MatLike,
+    screen_name: str,
+    area_name: str,
+    binary_threshold: int = 127,
+    crop_first: bool = True,
+) -> FindAreaResultEnum:
+    """
+    使用二值化图像在游戏截图中查找区域
+    Args:
+        ctx: 上下文
+        screen: 游戏截图
+        screen_name: 画面名称
+        area_name: 区域名称
+        binary_threshold: 二值化阈值，默认为127
+        crop_first: 在传入区域时 是否先裁剪再进行识别
+
+    Returns:
+        FindAreaResultEnum: 是否可以匹配到指定区域
+    """
+    area: ScreenArea = ctx.screen_loader.get_area(screen_name, area_name)
+    return find_area_in_screen_binary(ctx, screen, area, binary_threshold, crop_first)
+
+
+def find_area_in_screen_binary(
+    ctx: OneDragonContext,
+    screen: MatLike,
+    area: ScreenArea,
+    binary_threshold: int = 127,
+    crop_first: bool = True,
+) -> FindAreaResultEnum:
+    """
+    使用二值化图像在截图中查找区域
+    Args:
+        ctx: 上下文
+        screen: 游戏截图
+        area: 区域
+        binary_threshold: 二值化阈值，默认为127
+        crop_first: 在传入区域时 是否先裁剪再进行识别
+
+    Returns:
+        FindAreaResultEnum: 是否可以匹配到指定区域
+    """
+    if area is None:
+        return FindAreaResultEnum.AREA_NO_CONFIG
+
+    # 对屏幕进行二值化处理
+    binary_screen = cv2_utils.to_binary(screen, threshold=binary_threshold)
+
+    find: bool = False
+    if area.is_text_area:
+        ocr_result_list = ctx.ocr_service.get_ocr_result_list(
+            image=binary_screen,
+            rect=area.rect,
+            color_range=area.color_range,
+            crop_first=crop_first,
+        )
+
+        for ocr_result in ocr_result_list:
+            if str_utils.find_by_lcs(gt(area.text, 'game'), ocr_result.data, percent=area.lcs_percent):
+                find = True
+                break
+    elif area.is_template_area:
+        # 裁剪区域
+        rect = area.rect
+        part = cv2_utils.crop_image_only(binary_screen, rect)
+
+        # 使用二值化模板匹配
+        mrl = ctx.tm.match_template_binary(
+            part,
+            area.template_sub_dir,
+            area.template_id,
+            threshold=area.template_match_threshold,
+            binary_threshold=binary_threshold
+        )
+        find = mrl.max is not None
+
+    return FindAreaResultEnum.TRUE if find else FindAreaResultEnum.FALSE
+
+
+def find_area_in_screen(
+    ctx: OneDragonContext,
+    screen: MatLike,
+    area: ScreenArea,
+    crop_first: bool = True,
+) -> FindAreaResultEnum:
     """
     游戏截图中 是否能找到对应的区域
-    :param ctx: 上下文
-    :param screen: 游戏截图
-    :param area: 区域
-    :return: 结果
+
+    Args:
+        ctx: 上下文
+        screen: 游戏截图
+        area: 区域
+        crop_first: 在传入区域时 是否先裁剪再进行文本识别
+
+    Returns:
+        bool: 是否可以匹配到指定区域
     """
     if area is None:
         return FindAreaResultEnum.AREA_NO_CONFIG
 
     find: bool = False
     if area.is_text_area:
-        rect = area.rect
-        part = cv2_utils.crop_image_only(screen, rect)
+        ocr_result_list = ctx.ocr_service.get_ocr_result_list(
+            image=screen,
+            rect=area.rect,
+            color_range=area.color_range,
+            crop_first=crop_first,
+        )
 
-        if area.color_range is None:
-            to_ocr = part
-        else:
-            mask = cv2.inRange(part,
-                               np.array(area.color_range[0], dtype=np.uint8),
-                               np.array(area.color_range[1], dtype=np.uint8))
-            mask = cv2_utils.dilate(mask, 2)
-            to_ocr = cv2.bitwise_and(part, part, mask=mask)
-
-        ocr_result_map = ctx.ocr.run_ocr(to_ocr)
-        for ocr_result, mrl in ocr_result_map.items():
-            if str_utils.find_by_lcs(gt(area.text), ocr_result, percent=area.lcs_percent):
+        for ocr_result in ocr_result_list:
+            if str_utils.find_by_lcs(gt(area.text, 'game'), ocr_result.data, percent=area.lcs_percent):
                 find = True
                 break
     elif area.is_template_area:
@@ -81,32 +179,40 @@ def find_area_in_screen(ctx: OneDragonContext, screen: MatLike, area: ScreenArea
     return FindAreaResultEnum.TRUE if find else FindAreaResultEnum.FALSE
 
 
-def find_and_click_area(ctx: OneDragonContext, screen: MatLike, screen_name: str, area_name: str) -> OcrClickResultEnum:
+def find_and_click_area(
+    ctx: OneDragonContext,
+    screen: MatLike,
+    screen_name: str,
+    area_name: str,
+    crop_first: bool = True,
+) -> OcrClickResultEnum:
     """
     在一个区域匹配成功后进行点击
-    :param ctx: 运行上下文
-    :param screen: 屏幕截图
-    :param screen_name: 画面名称
-    :param area_name: 区域名称
-    :return:
+
+    Args:
+        ctx: 运行上下文
+        screen: 游戏截图
+        screen_name: 画面名称
+        area_name: 区域名称
+        crop_first: 在传入区域时 是否先裁剪再进行文本识别
+
+    Returns:
+        OcrClickResultEnum: 点击结果
     """
     area: ScreenArea = ctx.screen_loader.get_area(screen_name, area_name)
     if area is None:
         return OcrClickResultEnum.AREA_NO_CONFIG
     if area.is_text_area:
-        rect = area.rect
-        to_ocr_part = cv2_utils.crop_image_only(screen, rect)
-        if area.color_range is not None:
-            mask = cv2.inRange(to_ocr_part, area.color_range_lower, area.color_range_upper)
-            mask = cv2_utils.dilate(mask, 5)
-            to_ocr_part = cv2.bitwise_and(to_ocr_part, to_ocr_part, mask=mask)
-        # cv2_utils.show_image(to_ocr_part, win_name='debug', wait=1)
+        ocr_result_list = ctx.ocr_service.get_ocr_result_list(
+            image=screen,
+            rect=area.rect,
+            color_range=area.color_range,
+            crop_first=crop_first,
+        )
 
-        ocr_result_map = ctx.ocr.run_ocr(to_ocr_part)
-        for ocr_result, mrl in ocr_result_map.items():
-            if str_utils.find_by_lcs(gt(area.text), ocr_result, percent=area.lcs_percent):
-                to_click = mrl.max.center + area.left_top
-                if ctx.controller.click(to_click, pc_alt=area.pc_alt):
+        for ocr_result in ocr_result_list:
+            if str_utils.find_by_lcs(gt(area.text, 'game'), ocr_result.data, percent=area.lcs_percent):
+                if ctx.controller.click(ocr_result.center, pc_alt=area.pc_alt):
                     return OcrClickResultEnum.OCR_CLICK_SUCCESS
                 else:
                     return OcrClickResultEnum.OCR_CLICK_FAIL
@@ -129,76 +235,111 @@ def find_and_click_area(ctx: OneDragonContext, screen: MatLike, screen_name: str
         return OcrClickResultEnum.OCR_CLICK_SUCCESS
 
 
-def get_match_screen_name(ctx: OneDragonContext, screen: MatLike, screen_name_list: Optional[List[str]] = None) -> str:
+def get_match_screen_name(
+    ctx: OneDragonContext,
+    screen: MatLike,
+    screen_name_list: list[str] | None = None,
+    crop_first: bool = True,
+) -> str | None:
     """
     根据游戏截图 匹配一个最合适的画面
-    :param ctx: 上下文
-    :param screen: 游戏截图
-    :param screen_name_list: 传入时 只判断这里的画面
-    :return: 画面名字
+
+    Args:
+        ctx: 上下文
+        screen: 游戏截图
+        screen_name_list: 画面列表 传入时 只判断这里的画面
+        crop_first: 在传入区域时 是否先裁剪再进行文本识别
+
+    Returns:
+        str | None: 画面名称
     """
     if screen_name_list is not None:
         for screen_info in ctx.screen_loader.screen_info_list:
             if screen_info.screen_name not in screen_name_list:
                 continue
-            if is_target_screen(ctx, screen, screen_info=screen_info):
+            if is_target_screen(ctx, screen, screen_info=screen_info, crop_first=crop_first):
                 return screen_info.screen_name
     elif ctx.screen_loader.current_screen_name is not None or ctx.screen_loader.last_screen_name is not None:
-        return get_match_screen_name_from_last(ctx, screen)
+        return get_match_screen_name_from_last(ctx, screen, crop_first=crop_first)
     else:
         for screen_info in ctx.screen_loader.screen_info_list:
-            if is_target_screen(ctx, screen, screen_info=screen_info):
+            if is_target_screen(ctx, screen, screen_info=screen_info, crop_first=crop_first):
                 return screen_info.screen_name
 
+    return None
 
-def get_match_screen_name_from_last(ctx: OneDragonContext, screen: MatLike) -> str:
+
+def get_match_screen_name_from_last(
+    ctx: OneDragonContext,
+    screen: MatLike,
+    crop_first: bool = True,
+) -> str | None:
     """
     根据游戏截图 从上次记录的画面开始 匹配一个最合适的画面
-    :param ctx: 上下文
-    :param screen: 游戏截图
-    :return: 画面名字
+    Args:
+        ctx: 上下文
+        screen: 游戏截图
+        crop_first: 在传入区域时 是否先裁剪再进行文本识别
+
+    Returns:
+        str | None: 画面名称
     """
     bfs_list = []
+
     if ctx.screen_loader.current_screen_name is not None:  # 如果有记录上次所在画面 则从这个画面开始搜索
         bfs_list.append(ctx.screen_loader.current_screen_name)
     if ctx.screen_loader.last_screen_name is not None:
         bfs_list.append(ctx.screen_loader.last_screen_name)
-    if len(bfs_list) > 0:
-        bfs_idx = 0
-        while bfs_idx < len(bfs_list):
-            current_screen_name = bfs_list[bfs_idx]
-            bfs_idx += 1
 
-            if is_target_screen(ctx, screen, screen_name=current_screen_name):
-                return current_screen_name
+    if len(bfs_list) == 0:
+        return None
 
-            screen_info = ctx.screen_loader.get_screen(current_screen_name)
-            if screen_info is None:
+    bfs_idx = 0
+    while bfs_idx < len(bfs_list):
+        current_screen_name = bfs_list[bfs_idx]
+        bfs_idx += 1
+
+        if is_target_screen(ctx, screen, screen_name=current_screen_name, crop_first=crop_first):
+            return current_screen_name
+
+        screen_info = ctx.screen_loader.get_screen(current_screen_name)
+        if screen_info is None:
+            continue
+        for area in screen_info.area_list:
+            if area.goto_list is None or len(area.goto_list) == 0:
                 continue
-            for area in screen_info.area_list:
-                if area.goto_list is None or len(area.goto_list) == 0:
-                    continue
-                for goto_screen in area.goto_list:
-                    if goto_screen not in bfs_list:
-                        bfs_list.append(goto_screen)
+            for goto_screen in area.goto_list:
+                if goto_screen not in bfs_list:
+                    bfs_list.append(goto_screen)
 
-        # 最后 尝试搜索中没有出现的画面
-        for screen_info in ctx.screen_loader.screen_info_list:
-            if screen_info.screen_name in bfs_list:
-                continue
-            if is_target_screen(ctx, screen, screen_info=screen_info):
-                return screen_info.screen_name
+    # 最后 尝试搜索中没有出现的画面
+    for screen_info in ctx.screen_loader.screen_info_list:
+        if screen_info.screen_name in bfs_list:
+            continue
+        if is_target_screen(ctx, screen, screen_info=screen_info, crop_first=crop_first):
+            return screen_info.screen_name
 
-def is_target_screen(ctx: OneDragonContext, screen: MatLike,
-                     screen_name: Optional[str] = None,
-                     screen_info: Optional[ScreenInfo] = None) -> bool:
+    return None
+
+def is_target_screen(
+    ctx: OneDragonContext,
+    screen: MatLike,
+    screen_name: str | None = None,
+    screen_info: ScreenInfo | None = None,
+    crop_first: bool = True,
+) -> bool:
     """
     根据游戏截图 判断是否目标画面
-    :param ctx: 上下文
-    :param screen: 游戏截图
-    :param screen_name: 目标画面名称
-    :param screen_info: 目标画面信息 传入时优先使用
-    :return: 结果
+
+    Args:
+        ctx: 上下文
+        screen: 游戏截图
+        screen_name: 目标画面名称
+        screen_info: 目标画面信息 传入时优先使用
+        crop_first: 在传入区域时 是否先裁剪再进行文本识别
+
+    Returns:
+        bool: 是否目标画面
     """
     if screen_info is None:
         if screen_name is None:
@@ -214,40 +355,53 @@ def is_target_screen(ctx: OneDragonContext, screen: MatLike,
             continue
         existed_id_mark = True
 
-        if find_area_in_screen(ctx, screen, screen_area) != FindAreaResultEnum.TRUE:
+        if find_area_in_screen(ctx, screen, screen_area, crop_first) != FindAreaResultEnum.TRUE:
             fit_id_mark = False
             break
 
     return existed_id_mark and fit_id_mark
 
 
-def find_by_ocr(ctx: OneDragonContext, screen: MatLike, target_cn: str,
-                area: Optional[ScreenArea] = None, lcs_percent: float = 0.5,
-                color_range: Optional[List] = None) -> bool:
+def find_by_ocr(
+    ctx: OneDragonContext,
+    screen: MatLike,
+    target_cn: str,
+    area: ScreenArea | None = None,
+    lcs_percent: float = 0.5,
+    color_range: list[list[int]] | None = None,
+    crop_first: bool = True,
+) -> bool:
     """
+    判断画面中是否有目标文本
 
-    @param ctx:
-    @param screen:
-    @param target_cn:
-    @param area:
-    @param lcs_percent:
-    @param color_range:
-    @return:
+    Args:
+        ctx: 上下文
+        screen: 游戏截图
+        target_cn: 目标中文文本
+        area: 指定区域
+        lcs_percent: 文本匹配阈值
+        color_range: 区域筛选的颜色范围
+        crop_first: 在传入区域时 是否先裁剪再进行文本识别
+
+    Returns:
+        bool: 是否有目标文本
     """
     if lcs_percent is None:
         lcs_percent = area.lcs_percent
-    to_ocr_part = screen if area is None else cv2_utils.crop_image_only(screen, area.rect)
-    if color_range is not None:
-        mask = cv2.inRange(to_ocr_part, color_range[0], color_range[1])
-        to_ocr_part = cv2.bitwise_and(to_ocr_part, to_ocr_part, mask=mask)
-    ocr_result_map = ctx.ocr.run_ocr(to_ocr_part)
 
-    to_click: Optional[Point] = None
-    for ocr_result, mrl in ocr_result_map.items():
-        if mrl.max is None:
-            continue
-        if str_utils.find_by_lcs(gt(target_cn), ocr_result, percent=lcs_percent):
-            to_click = mrl.max.center
+    if color_range is None and area is not None:
+        color_range = area.color_range
+    ocr_result_list = ctx.ocr_service.get_ocr_result_list(
+        image=screen,
+        rect=area.rect if area is not None else None,
+        color_range=color_range,
+        crop_first=crop_first,
+    )
+
+    to_click: Point | None = None
+    for ocr_result in ocr_result_list:
+        if str_utils.find_by_lcs(gt(target_cn, 'game'), ocr_result.data, percent=lcs_percent):
+            to_click = ocr_result.center
             break
 
     return to_click is not None

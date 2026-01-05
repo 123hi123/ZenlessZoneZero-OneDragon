@@ -1,7 +1,8 @@
 import difflib
 import os
-import yaml
 from typing import List, Optional, Tuple
+
+import yaml
 
 from one_dragon.utils import os_utils
 from one_dragon.utils.i18_utils import gt
@@ -22,8 +23,6 @@ class HallowZeroDataService:
         self.resonium_list: List[Resonium] = []
         self.resonium_cate_list: List[str] = []
         self.cate_2_resonium: dict[str, List[Resonium]] = {}
-
-        self.reload()
 
     def reload(self):
         self._load_normal_events()
@@ -103,7 +102,7 @@ class HallowZeroDataService:
 
     def match_resonium_by_ocr(self, cate_ocr: str, name_ocr: str) -> Optional[Resonium]:
         log.info('当前识别 %s %s', cate_ocr, name_ocr)
-        category_list = [gt(i) for i in self.resonium_cate_list]
+        category_list = [gt(i, 'game') for i in self.resonium_cate_list]
         results = difflib.get_close_matches(cate_ocr, category_list, n=2, cutoff=0.5)
 
         if results is None or len(results) == 0:
@@ -129,7 +128,7 @@ class HallowZeroDataService:
 
         resonium_list = self.cate_2_resonium[self.resonium_cate_list[category_idx]]
 
-        resonium_name_list = [gt(i.name) for i in resonium_list]
+        resonium_name_list = [gt(i.name, 'game') for i in resonium_list]
         results = difflib.get_close_matches(name_ocr, resonium_name_list, n=1)
 
         if results is None or len(results) == 0:

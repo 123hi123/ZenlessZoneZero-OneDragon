@@ -1,19 +1,20 @@
-import subprocess
 from PySide6.QtWidgets import QWidget
-from qfluentwidgets import FluentIcon, SettingCardGroup, HyperlinkCard
+from qfluentwidgets import FluentIcon, SettingCardGroup, PushButton
 
 from one_dragon.base.config.basic_game_config import TypeInputWay, ScreenSizeEnum, FullScreenEnum, MonitorEnum
 from one_dragon.base.controller.pc_button.ds4_button_controller import Ds4ButtonEnum
 from one_dragon.base.controller.pc_button.xbox_button_controller import XboxButtonEnum
+from one_dragon.utils import cmd_utils
 from one_dragon.utils.i18_utils import gt
 from one_dragon_qt.widgets.column import Column
 from one_dragon_qt.widgets.setting_card.combo_box_setting_card import ComboBoxSettingCard
 from one_dragon_qt.widgets.setting_card.key_setting_card import KeySettingCard
+from one_dragon_qt.widgets.setting_card.multi_push_setting_card import MultiPushSettingCard
+from one_dragon_qt.widgets.setting_card.spin_box_setting_card import DoubleSpinBoxSettingCard
 from one_dragon_qt.widgets.setting_card.switch_setting_card import SwitchSettingCard
 from one_dragon_qt.widgets.setting_card.text_setting_card import TextSettingCard
 from one_dragon_qt.widgets.vertical_scroll_interface import VerticalScrollInterface
 from zzz_od.config.game_config import GamepadTypeEnum
-from zzz_od.config.agent_outfit_config import AgentOutfitNicole, AgentOutfitEllen, AgentOutfitAstraYao
 from zzz_od.context.zzz_context import ZContext
 
 
@@ -33,7 +34,6 @@ class SettingGameInterface(VerticalScrollInterface):
     def get_content_widget(self) -> QWidget:
         content_widget = Column()
 
-        content_widget.add_widget(self._get_agent_outfit_group())
         content_widget.add_widget(self._get_basic_group())
         content_widget.add_widget(self._get_launch_argument_group())
         content_widget.add_widget(self._get_key_group())
@@ -42,46 +42,31 @@ class SettingGameInterface(VerticalScrollInterface):
 
         return content_widget
 
-    def _get_agent_outfit_group(self) -> QWidget:
-        agent_outfit_group = SettingCardGroup(gt('代理人皮肤', 'ui'))
-
-        self.help_opt = HyperlinkCard(icon=FluentIcon.PIN, title='！设置皮肤以正常使用自动战斗功能  ！', url='', text='')
-        self.help_opt.linkButton.hide()
-        self.outfit_nicole_opt = ComboBoxSettingCard(icon=FluentIcon.PEOPLE, title='妮可', options_enum=AgentOutfitNicole)
-        self.outfit_nicole_opt.value_changed.connect(self._on_agent_outfit_changed)
-        self.outfit_ellen_opt = ComboBoxSettingCard(icon=FluentIcon.PEOPLE, title='艾莲', options_enum=AgentOutfitEllen)
-        self.outfit_ellen_opt.value_changed.connect(self._on_agent_outfit_changed)
-        self.outfit_astra_yao_opt = ComboBoxSettingCard(icon=FluentIcon.PEOPLE, title='耀嘉音', options_enum=AgentOutfitAstraYao)
-        self.outfit_astra_yao_opt.value_changed.connect(self._on_agent_outfit_changed)
-
-        agent_outfit_group.addSettingCard(self.help_opt)
-        agent_outfit_group.addSettingCard(self.outfit_nicole_opt)
-        agent_outfit_group.addSettingCard(self.outfit_ellen_opt)
-        agent_outfit_group.addSettingCard(self.outfit_astra_yao_opt)
-
-        return agent_outfit_group
-
     def _get_basic_group(self) -> QWidget:
-        basic_group = SettingCardGroup(gt('游戏基础', 'ui'))
+        basic_group = SettingCardGroup(gt('游戏基础'))
 
         self.input_way_opt = ComboBoxSettingCard(icon=FluentIcon.CLIPPING_TOOL, title='输入方式',
-                                                options_enum=TypeInputWay)
+                                                 options_enum=TypeInputWay)
         basic_group.addSettingCard(self.input_way_opt)
 
-        self.hdr_switch = SwitchSettingCard(icon=FluentIcon.SETTING, title='自动HDR',
-                                    content='手动启动游戏时「自动HDR」的状态')
-        self.hdr_switch.value_changed.connect(self._on_hdr_switch_changed)
-        basic_group.addSettingCard(self.hdr_switch)
+        self.hdr_btn_enable = PushButton(text=gt('启用 HDR'), icon=FluentIcon.SETTING, parent=self)
+        self.hdr_btn_enable.clicked.connect(self._on_hdr_enable_clicked)
+        self.hdr_btn_disable = PushButton(text=gt('禁用 HDR'), icon=FluentIcon.SETTING, parent=self)
+        self.hdr_btn_disable.clicked.connect(self._on_hdr_disable_clicked)
+        self.hdr_btn = MultiPushSettingCard(icon=FluentIcon.SETTING, title='切换 HDR 状态',
+                                            content='仅影响手动启动游戏，一条龙启动游戏会自动禁用 HDR',
+                                            btn_list=[self.hdr_btn_disable, self.hdr_btn_enable])
+        basic_group.addSettingCard(self.hdr_btn)
 
         return basic_group
 
     def _get_launch_argument_group(self) -> QWidget:
-        launch_argument_group = SettingCardGroup(gt('启动参数', 'ui'))
+        launch_argument_group = SettingCardGroup(gt('启动参数'))
 
         self.launch_argument_switch = SwitchSettingCard(icon=FluentIcon.SETTING, title='启用')
         self.launch_argument_switch.value_changed.connect(self._on_launch_argument_switch_changed)
         launch_argument_group.addSettingCard(self.launch_argument_switch)
-        
+
         self.screen_size_opt = ComboBoxSettingCard(icon=FluentIcon.FIT_PAGE, title='窗口尺寸', options_enum=ScreenSizeEnum)
         launch_argument_group.addSettingCard(self.screen_size_opt)
 
@@ -101,17 +86,10 @@ class SettingGameInterface(VerticalScrollInterface):
         )
         launch_argument_group.addSettingCard(self.launch_argument_advance)
 
-        # self.help_opt = HyperlinkCard(icon=FluentIcon.HELP, title='使用说明', text='前往',
-        #                               url='https://onedragon-anything.github.io/zzz/zh/docs/feat_launch_argument.html')
-        # self.help_opt.setContent('先看说明 再使用与提问')
-        # launch_argument_group.addSettingCard(self.help_opt)
-
-        # 这里可以补充文档后取消注释
-
         return launch_argument_group
 
     def _get_key_group(self) -> QWidget:
-        key_group = SettingCardGroup(gt('游戏按键', 'ui'))
+        key_group = SettingCardGroup(gt('游戏按键'))
 
         self.key_normal_attack_opt = KeySettingCard(icon=FluentIcon.GAME, title='普通攻击')
         key_group.addSettingCard(self.key_normal_attack_opt)
@@ -161,7 +139,7 @@ class SettingGameInterface(VerticalScrollInterface):
         return key_group
 
     def _get_gamepad_group(self) -> QWidget:
-        gamepad_group = SettingCardGroup(gt('手柄按键', 'ui'))
+        gamepad_group = SettingCardGroup(gt('手柄按键'))
 
         self.gamepad_type_opt = ComboBoxSettingCard(
             icon=FluentIcon.GAME, title='手柄类型',
@@ -172,8 +150,8 @@ class SettingGameInterface(VerticalScrollInterface):
         gamepad_group.addSettingCard(self.gamepad_type_opt)
 
         # xbox
-        self.xbox_key_press_time_opt = TextSettingCard(icon=FluentIcon.GAME, title='单次按键持续时间(秒)',
-                                                       content='自行调整，过小可能按键被吞，过大可能影响操作')
+        self.xbox_key_press_time_opt = DoubleSpinBoxSettingCard(icon=FluentIcon.GAME, title='单次按键持续时间(秒)',
+                                                                content='自行调整，过小可能按键被吞，过大可能影响操作')
         gamepad_group.addSettingCard(self.xbox_key_press_time_opt)
 
         self.xbox_key_normal_attack_opt = ComboBoxSettingCard(icon=FluentIcon.GAME, title='普通攻击', options_enum=XboxButtonEnum)
@@ -222,8 +200,8 @@ class SettingGameInterface(VerticalScrollInterface):
         gamepad_group.addSettingCard(self.xbox_key_chain_cancel_opt)
 
         # ds4
-        self.ds4_key_press_time_opt = TextSettingCard(icon=FluentIcon.GAME, title='单次按键持续时间(秒)',
-                                                      content='自行调整，过小可能按键被吞，过大可能影响操作')
+        self.ds4_key_press_time_opt = DoubleSpinBoxSettingCard(icon=FluentIcon.GAME, title='单次按键持续时间(秒)',
+                                                               content='自行调整，过小可能按键被吞，过大可能影响操作')
         gamepad_group.addSettingCard(self.ds4_key_press_time_opt)
 
         self.ds4_key_normal_attack_opt = ComboBoxSettingCard(icon=FluentIcon.GAME, title='普通攻击', options_enum=Ds4ButtonEnum)
@@ -276,12 +254,7 @@ class SettingGameInterface(VerticalScrollInterface):
     def on_interface_shown(self) -> None:
         VerticalScrollInterface.on_interface_shown(self)
 
-        self.outfit_nicole_opt.init_with_adapter(self.ctx.agent_outfit_config.get_prop_adapter('nicole'))
-        self.outfit_ellen_opt.init_with_adapter(self.ctx.agent_outfit_config.get_prop_adapter('ellen'))
-        self.outfit_astra_yao_opt.init_with_adapter(self.ctx.agent_outfit_config.get_prop_adapter('astra_yao'))
-
         self.input_way_opt.init_with_adapter(self.ctx.game_config.type_input_way_adapter)
-        self.hdr_switch.init_with_adapter(self.ctx.game_config.get_prop_adapter('hdr'))
 
         self.launch_argument_switch.init_with_adapter(self.ctx.game_config.get_prop_adapter('launch_argument'))
         self.screen_size_opt.init_with_adapter(self.ctx.game_config.get_prop_adapter('screen_size'))
@@ -289,8 +262,7 @@ class SettingGameInterface(VerticalScrollInterface):
         self.popup_window_switch.init_with_adapter(self.ctx.game_config.get_prop_adapter('popup_window'))
         self.monitor_opt.init_with_adapter(self.ctx.game_config.get_prop_adapter('monitor'))
         self.launch_argument_advance.init_with_adapter(self.ctx.game_config.get_prop_adapter('launch_argument_advance'))
-        if not self.ctx.game_config.launch_argument:
-            self._on_launch_argument_switch_changed(False)
+        self._update_launch_argument_part()
 
         self.key_normal_attack_opt.init_with_adapter(self.ctx.game_config.get_prop_adapter('key_normal_attack'))
         self.key_dodge_opt.init_with_adapter(self.ctx.game_config.get_prop_adapter('key_dodge'))
@@ -319,7 +291,7 @@ class SettingGameInterface(VerticalScrollInterface):
 
         is_xbox = self.ctx.game_config.gamepad_type == GamepadTypeEnum.XBOX.value.value
 
-        self.xbox_key_press_time_opt.init_with_adapter(self.ctx.game_config.get_prop_adapter('xbox_key_press_time', 'str', 'float'))
+        self.xbox_key_press_time_opt.init_with_adapter(self.ctx.game_config.get_prop_adapter('xbox_key_press_time'))
         self.xbox_key_normal_attack_opt.init_with_adapter(self.ctx.game_config.get_prop_adapter('xbox_key_normal_attack'))
         self.xbox_key_dodge_opt.init_with_adapter(self.ctx.game_config.get_prop_adapter('xbox_key_dodge'))
         self.xbox_key_switch_next_opt.init_with_adapter(self.ctx.game_config.get_prop_adapter('xbox_key_switch_next'))
@@ -355,7 +327,7 @@ class SettingGameInterface(VerticalScrollInterface):
 
         is_ds4 = self.ctx.game_config.gamepad_type == GamepadTypeEnum.DS4.value.value
 
-        self.ds4_key_press_time_opt.init_with_adapter(self.ctx.game_config.get_prop_adapter('ds4_key_press_time', 'str', 'float'))
+        self.ds4_key_press_time_opt.init_with_adapter(self.ctx.game_config.get_prop_adapter('ds4_key_press_time'))
         self.ds4_key_normal_attack_opt.init_with_adapter(self.ctx.game_config.get_prop_adapter('ds4_key_normal_attack'))
         self.ds4_key_dodge_opt.init_with_adapter(self.ctx.game_config.get_prop_adapter('ds4_key_dodge'))
         self.ds4_key_switch_next_opt.init_with_adapter(self.ctx.game_config.get_prop_adapter('ds4_key_switch_next'))
@@ -392,27 +364,29 @@ class SettingGameInterface(VerticalScrollInterface):
     def _on_gamepad_type_changed(self, idx: int, value: str) -> None:
         self._update_gamepad_part()
 
-    def _on_agent_outfit_changed(self) -> None:
-        self.ctx.init_agent_template_id()
-    
-    def _on_hdr_switch_changed(self, value: bool) -> None:
-        hdr_command_enable = f'cmd /c "reg add "HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences" /v "{self.ctx.game_account_config.game_path}" /d "AutoHDREnable=2097;" /f"'
-        hdr_command_disable = f'cmd /c "reg add "HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences" /v "{self.ctx.game_account_config.game_path}" /d "AutoHDREnable=2096;" /f"'
-        if value:
-            subprocess.Popen(hdr_command_enable)
-        else:
-            subprocess.Popen(hdr_command_disable)
-    
-    def _on_launch_argument_switch_changed(self, value: bool) -> None:
-        if value:
-            self.screen_size_opt.setVisible(True)
-            self.full_screen_opt.setVisible(True)
-            self.popup_window_switch.setVisible(True)
-            self.monitor_opt.setVisible(True)
-            self.launch_argument_advance.setVisible(True)
-        else:
-            self.screen_size_opt.setVisible(False)
-            self.full_screen_opt.setVisible(False)
-            self.popup_window_switch.setVisible(False)
-            self.monitor_opt.setVisible(False)
-            self.launch_argument_advance.setVisible(False)
+    def _on_hdr_enable_clicked(self) -> None:
+        self.hdr_btn_enable.setEnabled(False)
+        self.hdr_btn_disable.setEnabled(True)
+        cmd_utils.run_command(['reg', 'add', 'HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences',
+                               '/v', self.ctx.game_account_config.game_path, '/d', 'AutoHDREnable=2097;', '/f'])
+
+    def _on_hdr_disable_clicked(self) -> None:
+        self.hdr_btn_disable.setEnabled(False)
+        self.hdr_btn_enable.setEnabled(True)
+        cmd_utils.run_command(['reg', 'add', 'HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences',
+                               '/v', self.ctx.game_account_config.game_path, '/d', 'AutoHDREnable=2096;', '/f'])
+
+    def _update_launch_argument_part(self) -> None:
+        """
+        启动参数部分更新显示
+        :return:
+        """
+        value = self.ctx.game_config.launch_argument
+        self.screen_size_opt.setVisible(value)
+        self.full_screen_opt.setVisible(value)
+        self.popup_window_switch.setVisible(value)
+        self.monitor_opt.setVisible(value)
+        self.launch_argument_advance.setVisible(value)
+
+    def _on_launch_argument_switch_changed(self) -> None:
+        self._update_launch_argument_part()

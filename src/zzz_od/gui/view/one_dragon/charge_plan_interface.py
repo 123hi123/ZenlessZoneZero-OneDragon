@@ -1,16 +1,24 @@
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QWidget
-from qfluentwidgets import PrimaryPushButton, FluentIcon, CaptionLabel, LineEdit, ToolButton
-from typing import List
+from PySide6.QtWidgets import QWidget, QHBoxLayout
+from qfluentwidgets import PrimaryPushButton, FluentIcon, CaptionLabel, LineEdit, ToolButton, PushButton, Dialog
+from typing import Optional, List
 
 from one_dragon.base.config.config_item import ConfigItem
+from one_dragon.base.operation.application import application_const
+from one_dragon.utils.i18_utils import gt
+from one_dragon_qt.utils.config_utils import get_prop_adapter
 from one_dragon_qt.widgets.column import Column
 from one_dragon_qt.widgets.combo_box import ComboBox
+from one_dragon_qt.widgets.horizontal_setting_card_group import HorizontalSettingCardGroup
+from one_dragon_qt.widgets.setting_card.combo_box_setting_card import ComboBoxSettingCard
 from one_dragon_qt.widgets.setting_card.multi_push_setting_card import MultiLineSettingCard
 from one_dragon_qt.widgets.setting_card.switch_setting_card import SwitchSettingCard
+from one_dragon_qt.widgets.setting_card.multi_push_setting_card import MultiPushSettingCard
 from one_dragon_qt.widgets.vertical_scroll_interface import VerticalScrollInterface
 from zzz_od.application.battle_assistant.auto_battle_config import get_auto_battle_op_config_list
-from zzz_od.application.charge_plan.charge_plan_config import ChargePlanItem, CardNumEnum
+from zzz_od.application.charge_plan import charge_plan_const
+from zzz_od.application.charge_plan.charge_plan_config import ChargePlanItem, CardNumEnum, RestoreChargeEnum, \
+    ChargePlanConfig
 from zzz_od.application.notorious_hunt.notorious_hunt_config import NotoriousHuntBuffEnum
 from zzz_od.context.zzz_context import ZContext
 
@@ -23,10 +31,12 @@ class ChargePlanCard(MultiLineSettingCard):
     move_top = Signal(int)
 
     def __init__(self, ctx: ZContext,
-                 idx: int, plan: ChargePlanItem):
+                 idx: int, plan: ChargePlanItem,
+                 config: ChargePlanConfig):
         self.ctx: ZContext = ctx
         self.idx: int = idx
         self.plan: ChargePlanItem = plan
+        self.config: ChargePlanConfig = config
 
         self.category_combo_box = ComboBox()
         self.category_combo_box.currentIndexChanged.connect(self._on_category_changed)
@@ -49,11 +59,11 @@ class ChargePlanCard(MultiLineSettingCard):
         self.auto_battle_combo_box = ComboBox()
         self.auto_battle_combo_box.currentIndexChanged.connect(self._on_auto_battle_changed)
 
-        run_times_label = CaptionLabel(text='已运行次数')
+        run_times_label = CaptionLabel(text=gt('已运行次数'))
         self.run_times_input = LineEdit()
         self.run_times_input.textChanged.connect(self._on_run_times_changed)
 
-        plan_times_label = CaptionLabel(text='计划次数')
+        plan_times_label = CaptionLabel(text=gt('计划次数'))
         self.plan_times_input = LineEdit()
         self.plan_times_input.textChanged.connect(self._on_plan_times_changed)
 
@@ -90,7 +100,7 @@ class ChargePlanCard(MultiLineSettingCard):
             ]
         )
 
-        self.init_with_plan(plan)
+        self.init_with_plan(plan, config)
 
     def init_category_combo_box(self) -> None:
         config_list = self.ctx.compendium_service.get_charge_plan_category_list()
@@ -141,11 +151,16 @@ class ChargePlanCard(MultiLineSettingCard):
         self.plan_times_input.setText(str(self.plan.plan_times))
         self.plan_times_input.blockSignals(False)
 
-    def init_with_plan(self, plan: ChargePlanItem) -> None:
+    def init_with_plan(
+        self,
+        plan: ChargePlanItem,
+        config: ChargePlanConfig,
+    ) -> None:
         """
         以一个体力计划进行初始化
         """
         self.plan = plan
+        self.config = config
 
         self.init_category_combo_box()
         self.init_mission_type_combo_box()
@@ -162,6 +177,7 @@ class ChargePlanCard(MultiLineSettingCard):
     def _on_category_changed(self, idx: int) -> None:
         category_name = self.category_combo_box.itemData(idx)
         self.plan.category_name = category_name
+        self.plan.tab_name = '训练'
 
         self.init_mission_type_combo_box()
         self.init_mission_combo_box()
@@ -220,7 +236,7 @@ class ChargePlanCard(MultiLineSettingCard):
 
     def _on_move_up_clicked(self) -> None:
         self.move_up.emit(self.idx)
-    
+
     def _on_move_top_clicked(self) -> None:
         self.move_top.emit(self.idx)
 
@@ -231,7 +247,7 @@ class ChargePlanCard(MultiLineSettingCard):
         """
         根据历史记录更新
         """
-        history = self.ctx.charge_plan_config.get_history_by_uid(self.plan)
+        history = self.config.get_history_by_uid(self.plan)
         if history is None:
             return
 
@@ -260,38 +276,79 @@ class ChargePlanInterface(VerticalScrollInterface):
             nav_text_cn='体力计划'
         )
 
+        self.config: Optional[ChargePlanConfig] = None
+
     def get_content_widget(self) -> QWidget:
         self.content_widget = Column()
 
         self.loop_opt = SwitchSettingCard(icon=FluentIcon.SYNC, title='循环执行', content='开启时 会循环执行到体力用尽')
-        self.loop_opt.setValue(self.ctx.charge_plan_config.loop)
-        self.loop_opt.value_changed.connect(self._on_loop_changed)
-        self.content_widget.add_widget(self.loop_opt)
+        self.skip_plan_opt = SwitchSettingCard(icon=FluentIcon.FLAG, title='跳过计划', content='开启时 自动跳过体力不足的计划')
+        self.content_widget.add_widget(HorizontalSettingCardGroup([self.loop_opt, self.skip_plan_opt], spacing=6))
+
+        # 2.5版本已移除家政券功能，暂时关闭UI
+        # self.coupon_opt = SwitchSettingCard(icon=FluentIcon.GAME, title='使用家政券', content='运行区域巡防时使用家政券')
+        self.restore_charge_opt = ComboBoxSettingCard(icon=FluentIcon.ADD_TO, title='恢复电量', options_enum=RestoreChargeEnum)
+        # self.content_widget.add_widget(HorizontalSettingCardGroup([self.coupon_opt, self.restore_charge_opt], spacing=6))
+        self.content_widget.add_widget(self.restore_charge_opt)
+
+        self.cancel_btn = PushButton(icon=FluentIcon.CANCEL, text=gt('撤销'))
+        self.cancel_btn.setEnabled(False)
+        self.cancel_btn.clicked.connect(self._on_cancel_clicked)
+
+        self.remove_all_completed_btn = PushButton(
+            icon=FluentIcon.DELETE, text='删除已完成'
+        )
+        self.remove_all_completed_btn.clicked.connect(self._on_remove_all_completed_clicked)
+
+        self.remove_all_btn = PushButton(
+            icon=FluentIcon.DELETE, text='删除所有'
+        )
+        self.remove_all_btn.clicked.connect(self._on_remove_all_clicked)
+
+        self.remove_setting_card = MultiPushSettingCard(btn_list=[
+            self.cancel_btn,
+            self.remove_all_completed_btn,
+            self.remove_all_btn
+        ], icon=FluentIcon.DELETE, title='删除体力计划')
+        self.content_widget.add_widget(self.remove_setting_card)
 
         self.card_list: List[ChargePlanCard] = []
 
-        self.plus_btn = PrimaryPushButton(text='新增')
+        self.plus_btn = PrimaryPushButton(text=gt('新增'))
         self.plus_btn.clicked.connect(self._on_add_clicked)
-        self.content_widget.add_widget(self.plus_btn)
+        self.content_widget.add_widget(self.plus_btn, stretch=1)
 
         return self.content_widget
 
     def on_interface_shown(self) -> None:
         VerticalScrollInterface.on_interface_shown(self)
+
+        self.config = self.ctx.run_context.get_config(
+            app_id=charge_plan_const.APP_ID,
+            instance_idx=self.ctx.current_instance_idx,
+            group_id=application_const.DEFAULT_GROUP_ID,
+        )
+
         self.update_plan_list_display()
+
+        self.loop_opt.init_with_adapter(get_prop_adapter(self.config, 'loop'))
+        self.skip_plan_opt.init_with_adapter(get_prop_adapter(self.config, 'skip_plan'))
+        # self.coupon_opt.init_with_adapter(get_prop_adapter(self.config, 'use_coupon'))
+        self.restore_charge_opt.init_with_adapter(get_prop_adapter(self.config, 'restore_charge'))
 
     def on_interface_hidden(self) -> None:
         VerticalScrollInterface.on_interface_hidden(self)
 
     def update_plan_list_display(self):
-        plan_list = self.ctx.charge_plan_config.plan_list
+        plan_list = self.config.plan_list
 
         if len(plan_list) > len(self.card_list):
             self.content_widget.remove_widget(self.plus_btn)
 
             while len(self.card_list) < len(plan_list):
                 idx = len(self.card_list)
-                card = ChargePlanCard(self.ctx, idx, self.ctx.charge_plan_config.plan_list[idx])
+                card = ChargePlanCard(self.ctx, idx, self.config.plan_list[idx],
+                                      config=self.config)
                 card.changed.connect(self._on_plan_item_changed)
                 card.delete.connect(self._on_plan_item_deleted)
                 card.move_up.connect(self._on_plan_item_move_up)
@@ -304,7 +361,7 @@ class ChargePlanInterface(VerticalScrollInterface):
 
         for idx, plan in enumerate(plan_list):
             card = self.card_list[idx]
-            card.init_with_plan(plan)
+            card.init_with_plan(plan, self.config)
 
         while len(self.card_list) > len(plan_list):
             card = self.card_list[-1]
@@ -313,23 +370,55 @@ class ChargePlanInterface(VerticalScrollInterface):
             self.card_list.pop(-1)
 
     def _on_add_clicked(self) -> None:
-        self.ctx.charge_plan_config.add_plan()
+        from zzz_od.gui.view.one_dragon.charge_plan_dialog import ChargePlanDialog
+        dialog = ChargePlanDialog(self.ctx, self.config, parent=self)
+        result = dialog.exec()
+        if result:
+            self.config.add_plan(dialog.plan)
         self.update_plan_list_display()
 
     def _on_plan_item_changed(self, idx: int, plan: ChargePlanItem) -> None:
-        self.ctx.charge_plan_config.update_plan(idx, plan)
+        self.config.update_plan(idx, plan)
 
     def _on_plan_item_deleted(self, idx: int) -> None:
-        self.ctx.charge_plan_config.delete_plan(idx)
+        self.config.delete_plan(idx)
         self.update_plan_list_display()
 
     def _on_plan_item_move_up(self, idx: int) -> None:
-        self.ctx.charge_plan_config.move_up(idx)
+        self.config.move_up(idx)
         self.update_plan_list_display()
 
     def _on_plan_item_move_top(self, idx: int) -> None:
-        self.ctx.charge_plan_config.move_top(idx)
+        self.config.move_top(idx)
         self.update_plan_list_display()
 
-    def _on_loop_changed(self, new_value: bool) -> None:
-        self.ctx.charge_plan_config.loop = new_value
+    def _on_remove_all_completed_clicked(self) -> None:
+        dialog = Dialog('警告', '是否删除所有已完成的体力计划？', self)
+        dialog.setTitleBarVisible(False)
+        dialog.yesButton.setText('确定')
+        dialog.cancelButton.setText('取消')
+        if dialog.exec():
+            self.plan_list_backup = self.config.plan_list.copy()
+            not_completed_plans = [plan for plan in self.config.plan_list
+                                   if plan.run_times < plan.plan_times]
+            self.config.plan_list = not_completed_plans.copy()
+            self.config.save()
+            self.cancel_btn.setEnabled(True)
+        self.update_plan_list_display()
+
+    def _on_remove_all_clicked(self) -> None:
+        dialog = Dialog('警告', '是否删除所有体力计划？', self)
+        dialog.setTitleBarVisible(False)
+        dialog.yesButton.setText('确定')
+        dialog.cancelButton.setText('取消')
+        if dialog.exec():
+            self.plan_list_backup = self.config.plan_list.copy()
+            self.config.plan_list.clear()
+            self.config.save()
+            self.cancel_btn.setEnabled(True)
+        self.update_plan_list_display()
+
+    def _on_cancel_clicked(self) -> None:
+        self.config.plan_list = self.plan_list_backup.copy()
+        self.cancel_btn.setEnabled(False)
+        self.update_plan_list_display()

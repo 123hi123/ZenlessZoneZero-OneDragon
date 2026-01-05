@@ -5,17 +5,21 @@ class PredictBase(object):
         pass
 
     def get_onnx_session(self, model_dir, use_gpu):
-        # 使用gpu
+        availables = onnxruntime.get_available_providers()
         if use_gpu:
-            providers = providers=['CUDAExecutionProvider']
+            if 'CUDAExecutionProvider' in availables:
+                providers = ['CUDAExecutionProvider']
+            elif 'DmlExecutionProvider' in availables:
+                providers = ['DmlExecutionProvider']
+            else:
+                providers = ['CPUExecutionProvider']
         else:
-            providers = providers = ['CPUExecutionProvider']
+            providers = ['CPUExecutionProvider']
 
-        onnx_session = onnxruntime.InferenceSession(model_dir, None,providers=providers)
+        onnx_session = onnxruntime.InferenceSession(model_dir, providers=providers)
 
         # print("providers:", onnxruntime.get_device())
         return onnx_session
-
 
     def get_output_name(self, onnx_session):
         """

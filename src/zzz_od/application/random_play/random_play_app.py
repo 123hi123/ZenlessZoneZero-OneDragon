@@ -1,23 +1,29 @@
-import time
-
 import difflib
+import time
+from typing import ClassVar, List, Optional
+
 from cv2.typing import MatLike
-from typing import List, ClassVar, Optional
 
 from one_dragon.base.geometry.point import Point
 from one_dragon.base.matcher.match_result import MatchResult
+from one_dragon.base.operation.application import application_const
 from one_dragon.base.operation.operation_edge import node_from
 from one_dragon.base.operation.operation_node import operation_node
+from one_dragon.base.operation.operation_notify import node_notify, NotifyTiming
 from one_dragon.base.operation.operation_round_result import OperationRoundResult
 from one_dragon.utils import cv2_utils
 from one_dragon.utils.i18_utils import gt
 from one_dragon.utils.log_utils import log
+from zzz_od.application.random_play import random_play_const
+from zzz_od.application.random_play.random_play_config import (
+    RANDOM_AGENT_NAME,
+    RandomPlayConfig,
+)
 from zzz_od.application.zzz_application import ZApplication
 from zzz_od.context.zzz_context import ZContext
-from zzz_od.game_data.agent import AgentEnum, Agent
+from zzz_od.game_data.agent import Agent, AgentEnum
 from zzz_od.operation.back_to_normal_world import BackToNormalWorld
 from zzz_od.operation.transport import Transport
-from zzz_od.operation.wait_normal_world import WaitNormalWorld
 
 
 class RandomPlayApp(ZApplication):
@@ -28,10 +34,15 @@ class RandomPlayApp(ZApplication):
     def __init__(self, ctx: ZContext):
         ZApplication.__init__(
             self,
-            ctx=ctx, app_id='random_play',
-            op_name=gt('影像店营业', 'ui'),
-            run_record=ctx.random_play_run_record,
-            retry_in_od=True,  # 传送落地有可能会歪 重试
+            ctx=ctx,
+            app_id=random_play_const.APP_ID,
+            op_name=random_play_const.APP_NAME,
+        )
+
+        self.config: RandomPlayConfig = self.ctx.run_context.get_config(
+            app_id=self.app_id,
+            instance_idx=self.ctx.current_instance_idx,
+            group_id=application_const.DEFAULT_GROUP_ID,
         )
 
     def handle_init(self) -> None:
@@ -48,16 +59,10 @@ class RandomPlayApp(ZApplication):
 
     @operation_node(name='传送', is_start_node=True)
     def transport(self) -> OperationRoundResult:
-        op = Transport(self.ctx, 'Random Play', '柜台')
+        op = Transport(self.ctx, '录像店', '柜台')
         return self.round_by_op_result(op.execute())
 
     @node_from(from_name='传送')
-    @operation_node(name='等待加载')
-    def wait_world(self) -> OperationRoundResult:
-        op = WaitNormalWorld(self.ctx)
-        return self.round_by_op_result(op.execute())
-
-    @node_from(from_name='等待加载')
     @operation_node(name='移动交互')
     def move_and_interact(self) -> OperationRoundResult:
         """
@@ -75,28 +80,24 @@ class RandomPlayApp(ZApplication):
     @node_from(from_name='移动交互')
     @operation_node(name='等待经营画面加载')
     def wait_run(self) -> OperationRoundResult:
-        screen = self.screenshot()
-
-        result = self.round_by_find_area(screen, '影像店营业', '昨日账本')
+        result = self.round_by_find_area(self.last_screenshot, '影像店营业', '昨日账本')
         if result.is_success:
             return self.round_by_click_area('影像店营业', '返回',
                                             success_wait=1, retry_wait=1)
         # 看看经营状况
-        return self.round_by_find_area(screen, '影像店营业', '经营状况',
+        return self.round_by_find_area(self.last_screenshot, '影像店营业', '经营状况',
                                        success_wait=1, retry_wait=1)
 
     @node_from(from_name='等待经营画面加载')
     @operation_node(name='识别营业状态')
     def check_running(self) -> OperationRoundResult:
-        screen = self.screenshot()
-
         # 防止上一步跳过了昨日账本
-        result = self.round_by_find_area(screen, '影像店营业', '昨日账本')
+        result = self.round_by_find_area(self.last_screenshot, '影像店营业', '昨日账本')
         if result.is_success:
             self.round_by_click_area('影像店营业', '返回')
             return self.round_retry(wait=1)
 
-        result = self.round_by_find_area(screen, '影像店营业', '正在营业')
+        result = self.round_by_find_area(self.last_screenshot, '影像店营业', '正在营业')
         if result.is_success:
             return self.round_success(RandomPlayApp.STATUS_ALREADY_RUNNING)
         else:
@@ -119,24 +120,22 @@ class RandomPlayApp(ZApplication):
         在经营状况页面 点击代理人的位置
         :return:
         """
-        screen = self.screenshot()
-
-        result = self.round_by_find_area(screen, '影像店营业', '选择宣传员')
+        result = self.round_by_find_area(self.last_screenshot, '影像店营业', '选择宣传员')
         if not result.is_success:
             return self.round_retry(status=result.status, wait_round_time=1)
 
-        target_agent_name_1 = self.ctx.random_play_config.agent_name_1
-        target_agent_name_2 = self.ctx.random_play_config.agent_name_2
+        target_agent_name_1 = self.config.agent_name_1
+        target_agent_name_2 = self.config.agent_name_2
         dt = self.run_record.get_current_dt()
         idx = (int(dt[-1]) % 2) + 1
 
-        if (self.ctx.random_play_config.random_agent_name() == target_agent_name_1
-                or self.ctx.random_play_config.random_agent_name() == target_agent_name_2):
+        if (RANDOM_AGENT_NAME == target_agent_name_1
+                or RANDOM_AGENT_NAME == target_agent_name_2):
             # 随机选择
             self.round_by_click_area('影像店营业', '宣传员-%d' % idx)
             time.sleep(0.5)
 
-            return self.round_by_find_and_click_area(screen, '影像店营业', '确认', success_wait=1, retry_wait=1)
+            return self.round_by_find_and_click_area(self.last_screenshot, '影像店营业', '确认', success_wait=1, retry_wait=1)
 
         area = self.ctx.screen_loader.get_area('影像店营业', '宣传员列表')
         if idx == 1:
@@ -145,18 +144,18 @@ class RandomPlayApp(ZApplication):
             target_agent_name = target_agent_name_2
 
         # 使用名称匹配
-        result = self.round_by_ocr_and_click(screen, target_agent_name, area=area,
+        result = self.round_by_ocr_and_click(self.last_screenshot, target_agent_name, area=area,
                                              color_range=[(230, 230, 230), (255, 255, 255)])
         if result.is_success:
             time.sleep(0.5)
-            return self.round_by_find_and_click_area(screen, '影像店营业', '确认', success_wait=1, retry_wait=1)
+            return self.round_by_find_and_click_area(self.last_screenshot, '影像店营业', '确认', success_wait=1, retry_wait=1)
 
         # 使用头像匹配
-        mr = self.get_pos_by_avatar(screen, target_agent_name)
+        mr = self.get_pos_by_avatar(self.last_screenshot, target_agent_name)
         if mr is not None:
             self.ctx.controller.click(mr.center)
             time.sleep(0.5)
-            return self.round_by_find_and_click_area(screen, '影像店营业', '确认', success_wait=1, retry_wait=1)
+            return self.round_by_find_and_click_area(self.last_screenshot, '影像店营业', '确认', success_wait=1, retry_wait=1)
 
         # 找不到时 向下滚动
         start_point = area.center
@@ -183,20 +182,19 @@ class RandomPlayApp(ZApplication):
         if agent is None:
             return None
 
-        mr = self.ctx.tm.match_one_by_feature(part, 'predefined_team', f'avatar_{agent.template_id}')
-        if mr is None:
-            return None
+        for template_id in agent.template_id_list:
+            mr = self.ctx.tm.match_one_by_feature(part, 'predefined_team', f'avatar_{template_id}')
+            if mr is None:
+                return None
 
-        mr.add_offset(area.left_top)
-        return mr
+            mr.add_offset(area.left_top)
+            return mr
 
 
     @node_from(from_name='选择宣传员')
     @operation_node(name='识别录像带主题')
     def check_video_theme(self) -> OperationRoundResult:
-        screen = self.screenshot()
-
-        result = self.round_by_find_area(screen, '影像店营业', '经营状况')
+        result = self.round_by_find_area(self.last_screenshot, '影像店营业', '经营状况')
         if not result.is_success:
             return self.round_retry(status=result.status, wait=1)
 
@@ -206,9 +204,9 @@ class RandomPlayApp(ZApplication):
             self.ctx.screen_loader.get_area('影像店营业', '录像带主题-3')
         ]
 
-        target_list = [gt(i) for i in self._all_video_themes]
+        target_list = [gt(i, 'game') for i in self._all_video_themes]
         for area in areas:
-            part = cv2_utils.crop_image_only(screen, area.rect)
+            part = cv2_utils.crop_image_only(self.last_screenshot, area.rect)
             ocr_result = self.ctx.ocr.run_ocr_single_line(part)
 
             results = difflib.get_close_matches(ocr_result, target_list, n=1)
@@ -241,13 +239,12 @@ class RandomPlayApp(ZApplication):
     @node_from(from_name='点击录像带入口')
     @operation_node(name='识别推荐上架')
     def check_recommended(self) -> OperationRoundResult:
-        screen = self.screenshot()
-        result = self.round_by_find_and_click_area(screen, '影像店营业', '推荐上架')
+        result = self.round_by_find_and_click_area(self.last_screenshot, '影像店营业', '推荐上架')
 
         if result.is_success:
             return self.round_success(status=result.status, wait=1)
 
-        return self.round_by_find_area(screen, '影像店营业', '上架筛选', retry_wait=1)
+        return self.round_by_find_area(self.last_screenshot, '影像店营业', '上架筛选', retry_wait=1)
 
     @node_from(from_name='识别推荐上架', status='上架筛选')
     @node_from(from_name='上架')
@@ -261,8 +258,7 @@ class RandomPlayApp(ZApplication):
         if self._current_idx >= len(self._need_video_themes):
             return self.round_success(status=RandomPlayApp.STATUS_ALL_VIDEO_CHOOSE)
 
-        screen = self.screenshot()
-        result = self.round_by_find_and_click_area(screen, '影像店营业', '上架筛选')
+        result = self.round_by_find_and_click_area(self.last_screenshot, '影像店营业', '上架筛选')
         if result.is_success:
             self._current_idx += 1
             return self.round_success(result.status, wait=1)
@@ -276,12 +272,11 @@ class RandomPlayApp(ZApplication):
         选择主题
         :return:
         """
-        screen = self.screenshot()
         area = self.ctx.screen_loader.get_area('影像店营业', '主题筛选')
-        part = cv2_utils.crop_image_only(screen, area.rect)
+        part = cv2_utils.crop_image_only(self.last_screenshot, area.rect)
         ocr_results = self.ctx.ocr.run_ocr(part)
 
-        target_list = [gt(i) for i in self._all_video_themes]
+        target_list = [gt(i, 'game') for i in self._all_video_themes]
         current_target = self._need_video_themes[self._current_idx - 1]
         for ocr_str, mrl in ocr_results.items():
             if mrl.max is None:
@@ -316,13 +311,11 @@ class RandomPlayApp(ZApplication):
         上架
         :return:
         """
-        screen = self.screenshot()
-
-        result = self.round_by_find_area(screen, '影像店营业', '下架',)
+        result = self.round_by_find_area(self.last_screenshot, '影像店营业', '下架',)
         if result.is_success:  # 已经上架了
             return self.round_success()
 
-        result = self.round_by_find_area(screen, '影像店营业', '上架')
+        result = self.round_by_find_area(self.last_screenshot, '影像店营业', '上架')
         if not result.is_success:
             return self.round_wait(status=result.status, wait_round_time=1)
 
@@ -341,8 +334,7 @@ class RandomPlayApp(ZApplication):
     @node_from(from_name='上架筛选', status=STATUS_ALL_VIDEO_CHOOSE)
     @operation_node(name='返回')
     def back(self) -> OperationRoundResult:
-        screen = self.screenshot()
-        result = self.round_by_find_area(screen, '影像店营业', '经营状况')
+        result = self.round_by_find_area(self.last_screenshot, '影像店营业', '经营状况')
         if result.is_success:
             return self.round_success()
 
@@ -351,17 +343,16 @@ class RandomPlayApp(ZApplication):
     @node_from(from_name='返回')
     @operation_node(name='开始营业')
     def start(self) -> OperationRoundResult:
-        screen = self.screenshot()
-        return self.round_by_find_and_click_area(screen, '影像店营业', '开始营业', success_wait=1, retry_wait=1)
+        return self.round_by_find_and_click_area(self.last_screenshot, '影像店营业', '开始营业', success_wait=1, retry_wait=1)
 
     @node_from(from_name='开始营业')
     @operation_node(name='开始营业确认')
     def confirm(self) -> OperationRoundResult:
-        screen = self.screenshot()
-        return self.round_by_find_and_click_area(screen, '影像店营业', '开始营业-确认', success_wait=1, retry_wait=1)
+        return self.round_by_find_and_click_area(self.last_screenshot, '影像店营业', '开始营业-确认', success_wait=1, retry_wait=1)
 
     @node_from(from_name='开始营业确认')
     @node_from(from_name='识别营业状态', status=STATUS_ALREADY_RUNNING)
+    @node_notify(when=NotifyTiming.PREVIOUS_DONE)
     @operation_node(name='返回大世界')
     def back_to_world(self) -> OperationRoundResult:
         op = BackToNormalWorld(self.ctx)

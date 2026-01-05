@@ -1,20 +1,26 @@
-from concurrent.futures import ThreadPoolExecutor
+from __future__ import annotations
 
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from enum import Enum
-from typing import Optional, Callable
+from typing import TYPE_CHECKING
 
 from one_dragon.base.operation.application_run_record import AppRunRecord
-from one_dragon.base.operation.one_dragon_context import OneDragonContext
 from one_dragon.base.operation.operation import Operation
 from one_dragon.base.operation.operation_base import OperationResult
+from one_dragon.base.operation.operation_notify import send_application_notify
+
+if TYPE_CHECKING:
+    from one_dragon.base.operation.one_dragon_context import OneDragonContext
 
 _app_preheat_executor = ThreadPoolExecutor(thread_name_prefix='od_app_preheat', max_workers=1)
 
 
 class ApplicationEventId(Enum):
 
-    APPLICATION_START: str = '应用开始运行'
-    APPLICATION_STOP: str = '应用停止运行'
+    APPLICATION_START = '应用开始运行'
+    APPLICATION_STOP = '应用停止运行'
 
 
 class Application(Operation):
@@ -23,53 +29,48 @@ class Application(Operation):
                  node_max_retry_times: int = 1,
                  op_name: str = None,
                  timeout_seconds: float = -1,
-                 op_callback: Optional[Callable[[OperationResult], None]] = None,
+                 op_callback: Callable[[OperationResult], None] | None = None,
                  need_check_game_win: bool = True,
-                 op_to_enter_game: Optional[Operation] = None,
-                 init_context_before_start: bool = True,
-                 stop_context_after_stop: bool = True,
-                 run_record: Optional[AppRunRecord] = None,
-                 need_ocr: bool = True,
-                 retry_in_od: bool = False
+                 op_to_enter_game: Operation | None = None,
+                 run_record: AppRunRecord | None = None,
                  ):
-        super().__init__(ctx, node_max_retry_times=node_max_retry_times, op_name=op_name,
-                         timeout_seconds=timeout_seconds,
-                         op_callback=op_callback,
-                         need_check_game_win=need_check_game_win,
-                         op_to_enter_game=op_to_enter_game)
+        Operation.__init__(
+            self,
+            ctx,
+            node_max_retry_times=node_max_retry_times,
+            op_name=op_name,
+            timeout_seconds=timeout_seconds,
+            op_callback=op_callback,
+            need_check_game_win=need_check_game_win,
+            op_to_enter_game=op_to_enter_game,
+        )
 
+        # 应用唯一标识
         self.app_id: str = app_id
-        """应用唯一标识"""
 
-        self.run_record: Optional[AppRunRecord] = run_record
-        """运行记录"""
+        # 运行记录
+        self.run_record: AppRunRecord | None = run_record
+        if run_record is None:
+            # 部分应用没有运行记录 跳过即可
+            with suppress(Exception):
+                self.run_record = ctx.run_context.get_run_record(
+                    app_id=self.app_id,
+                    instance_idx=ctx.current_instance_idx,
+                )
 
-        self.init_context_before_start: bool = init_context_before_start
-        """运行前是否初始化上下文 一条龙只有第一个应用需要"""
-
-        self.stop_context_after_stop: bool = stop_context_after_stop
-        """运行后是否停止上下文 一条龙只有最后一个应用需要"""
-
-        self.need_ocr: bool = need_ocr
-        """需要OCR"""
-
-        self._retry_in_od: bool = retry_in_od  # 在一条龙中进行重试
-
-    def _init_before_execute(self) -> None:
-        Operation._init_before_execute(self)
+    def handle_init(self) -> None:
+        """
+        运行前初始化
+        """
+        Operation.handle_init(self)
         if self.run_record is not None:
+            self.run_record.check_and_update_status()  # 先判断是否重置记录
             self.run_record.update_status(AppRunRecord.STATUS_RUNNING)
 
-        self.init_for_application()
-        self.ctx.start_running()
-        self.ctx.dispatch_event(ApplicationEventId.APPLICATION_START.value, self.app_id)
+        if self.ctx.run_context.is_app_need_notify(self.app_id):
+            send_application_notify(self, None)
 
-    def handle_resume(self) -> None:
-        """
-        恢复运行后的处理 由子类实现
-        :return:
-        """
-        pass
+        self.ctx.dispatch_event(ApplicationEventId.APPLICATION_START.value, self.app_id)
 
     def after_operation_done(self, result: OperationResult):
         """
@@ -78,8 +79,10 @@ class Application(Operation):
         """
         Operation.after_operation_done(self, result)
         self._update_record_after_stop(result)
-        if self.stop_context_after_stop:
-            self.ctx.stop_running()
+
+        if self.ctx.run_context.is_app_need_notify(self.app_id):
+            send_application_notify(self, result.success)
+
         self.ctx.dispatch_event(ApplicationEventId.APPLICATION_STOP.value, self.app_id)
 
     def _update_record_after_stop(self, result: OperationResult):
@@ -113,11 +116,3 @@ class Application(Operation):
     @staticmethod
     def get_preheat_executor() -> ThreadPoolExecutor:
         return _app_preheat_executor
-
-    def init_for_application(self) -> bool:
-        """
-        初始化
-        """
-        if self.need_ocr:
-            self.ctx.ocr.init_model()
-        return True

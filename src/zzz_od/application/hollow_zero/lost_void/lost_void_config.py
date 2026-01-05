@@ -1,24 +1,25 @@
 from enum import Enum
-from typing import Optional
 
 from one_dragon.base.config.config_item import ConfigItem
-from one_dragon.base.config.yaml_config import YamlConfig
+from one_dragon.base.operation.application.application_config import ApplicationConfig
 
 
-class LostVoidExtraTask(Enum):
+class LostVoidTaskEnum(Enum):
 
-    NONE = ConfigItem('不进行')
-    EVAL_POINT = ConfigItem('刷满业绩点')
-    PERIOD_REWARD = ConfigItem('刷满周期奖励')
+    BOUNTY_COMMISSION = ConfigItem('完成悬赏委托', desc='完成每周8000积分奖励')
+    EVAL_POINT = ConfigItem('刷满业绩点', desc='刷满每周业绩点')
+    PERIOD_REWARD = ConfigItem('刷满周期奖励', desc='刷满每周丁尼')
+    WEEKLY_PLAN_TIMES = ConfigItem('完成周计划次数', desc='完成配置的每周计划次数')
 
 
-class LostVoidConfig(YamlConfig):
+class LostVoidConfig(ApplicationConfig):
 
-    def __init__(self, instance_idx: Optional[int] = None):
-        YamlConfig.__init__(
+    def __init__(self, instance_idx: int, group_id: str):
+        ApplicationConfig.__init__(
             self,
-            module_name='lost_void',
+            app_id='lost_void',
             instance_idx=instance_idx,
+            group_id=group_id,
         )
 
     @property
@@ -39,11 +40,15 @@ class LostVoidConfig(YamlConfig):
 
     @property
     def extra_task(self) -> str:
-        return self.get('extra_task', LostVoidExtraTask.PERIOD_REWARD.value.value)
+        return self.get('extra_task', LostVoidTaskEnum.BOUNTY_COMMISSION.value.value)
 
     @extra_task.setter
     def extra_task(self, new_value: str):
         self.update('extra_task', new_value)
+
+    @property
+    def is_bounty_commission_mode(self) -> bool:
+        return self.extra_task == LostVoidTaskEnum.BOUNTY_COMMISSION.value.value
 
     @property
     def mission_name(self) -> str:
@@ -55,7 +60,7 @@ class LostVoidConfig(YamlConfig):
 
     @property
     def challenge_config(self) -> str:
-        return self.get('challenge_config', '默认-终结')
+        return self.get('challenge_config', '默认-成就模式')
 
     @challenge_config.setter
     def challenge_config(self, new_value: str):

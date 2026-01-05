@@ -30,34 +30,26 @@ class GamepadInstallCard(BaseInstallCard):
         :return:
         """
         if success:
-            self.ctx.env_config.update('vgamepad_requirement', self.get_requirement_time())
             self.check_and_update_display()
         else:
-            self.update_display(FluentIcon.INFO.icon(color=FluentThemeColor.RED.value), gt(msg, 'ui'))
+            self.update_display(FluentIcon.INFO.icon(color=FluentThemeColor.RED.value), gt(msg))
 
     def get_display_content(self) -> Tuple[QIcon, str]:
         """
         获取需要显示的状态，由子类自行实现
         :return: 显示的图标、文本
         """
-        last = self.ctx.env_config.get('vgamepad_requirement', '')
-
-        if last != self.get_requirement_time():
+        if not self.ctx.env_config.uv_path:
             icon = FluentIcon.INFO.icon(color=FluentThemeColor.GOLD.value)
-            msg = gt('需更新，请使用安装器更新', 'ui')
+            msg = gt('未配置 UV')
+        elif not self.ctx.python_service.uv_check_sync_status(groups=['gamepad']):
+            icon = FluentIcon.INFO.icon(color=FluentThemeColor.GOLD.value)
+            msg = gt('需更新')
         else:
             icon = FluentIcon.INFO.icon(color=FluentThemeColor.DEFAULT_BLUE.value)
-            msg = f"{gt('已安装', 'ui')}" + ' ' + last
+            msg = f"{gt('已安装')}"
 
         return icon, msg
-
-    def get_requirement_time(self) -> Optional[str]:
-        """
-        获取 requirements.txt 的最后更新时间
-        :return:
-        """
-        log.info('获取依赖文件的最后修改时间')
-        return cmd_utils.run_command([self.ctx.env_config.git_path, 'log', '-1', '--pretty=format:"%ai', '--', self.get_requirement_path()])
 
     def install_requirements(self, progress_callback: Optional[Callable[[float, str], None]]) -> Tuple[bool, str]:
         """
@@ -65,15 +57,7 @@ class GamepadInstallCard(BaseInstallCard):
         :return:
         """
         progress_callback(-1, '正在安装...安装过程可能需要安装驱动 正常安装即可')
-        result = cmd_utils.run_command([self.ctx.env_config.python_path, '-m', 'pip', 'install', '--upgrade',
-                                        '-r', self.get_requirement_path(),
-                                        '--index-url', self.ctx.env_config.pip_source])
-        success = result is not None
-        msg = '运行依赖安装成功' if success else '运行依赖安装失败'
+        if not self.ctx.env_config.uv_path:
+            return False, '未配置UV'
+        success, msg = self.ctx.python_service.uv_sync(progress_callback, groups=['gamepad'])
         return success, msg
-
-    def get_requirement_path(self) -> str:
-        return os.path.join(
-            os_utils.get_work_dir(),
-            self.ctx.project_config.get('vgamepad_requirements', 'requirements-gamepad.txt')
-        )

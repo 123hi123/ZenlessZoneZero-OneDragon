@@ -1,7 +1,6 @@
 import time
 
 from cv2.typing import MatLike
-from typing import List
 
 from one_dragon.base.geometry.point import Point
 
@@ -21,7 +20,7 @@ class ControllerBase:
         """
         基础控制器的定义
         """
-        self.screenshot_history: List[ScreenshotWithTime] = []
+        self.screenshot_history: list[ScreenshotWithTime] = []
         self.screenshot_alive_seconds: float = screenshot_alive_seconds  # 截图在内存的存活时间
         self.max_screenshot_cnt: int = max_screenshot_cnt  # 内存中最多保持的截图数量
 
@@ -31,6 +30,12 @@ class ControllerBase:
         :return:
         """
         return False
+
+    def cleanup_after_app_shutdown(self) -> None:
+        """
+        清理资源
+        """
+        pass
 
     @property
     def is_game_window_ready(self) -> bool:
@@ -50,25 +55,27 @@ class ControllerBase:
         """
         pass
 
-    def screenshot(self, independent: bool = False) -> MatLike:
+    def screenshot(self, independent: bool = False) -> tuple[float, MatLike | None]:
         """
         截图并保存在内存中
         """
         self.before_screenshot()
-        now = time.time()
+        screenshot_time = time.time()
         screen = self.get_screenshot(independent)
+        if screen is None:
+            return screenshot_time, None
         fix_screen = self.fill_uid_black(screen)
 
         if self.max_screenshot_cnt > 0:
-            self.screenshot_history.append(ScreenshotWithTime(fix_screen, now))
+            self.screenshot_history.append(ScreenshotWithTime(fix_screen, screenshot_time))
             while len(self.screenshot_history) > self.max_screenshot_cnt:
                 self.screenshot_history.pop(0)
 
             while (len(self.screenshot_history) > 0
-                and now - self.screenshot_history[0].create_time > self.screenshot_alive_seconds):
+                and screenshot_time - self.screenshot_history[0].create_time > self.screenshot_alive_seconds):
                 self.screenshot_history.pop(0)
 
-        return fix_screen
+        return screenshot_time, fix_screen
 
     def before_screenshot(self) -> None:
         """

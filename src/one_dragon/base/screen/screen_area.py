@@ -1,5 +1,6 @@
+from typing import Optional
+
 import numpy as np
-from typing import Optional, List
 
 from one_dragon.base.geometry.point import Point
 from one_dragon.base.geometry.rectangle import Rect
@@ -7,19 +8,20 @@ from one_dragon.base.geometry.rectangle import Rect
 
 class ScreenArea:
 
-    def __init__(self,
-                 area_name: str = '',
-                 pc_rect: Rect = Rect(0, 0, 0, 0),
-                 text: Optional[str] = '',
-                 lcs_percent: float = 0.5,
-                 template_id: Optional[str] = '',
-                 template_sub_dir: Optional[str] = '',
-                 template_match_threshold: float = 0.7,
-                 pc_alt: bool = False,
-                 id_mark: bool = False,
-                 goto_list: List[str] = None,
-                 color_range: List[List[int]] = None,
-                 ):
+    def __init__(
+        self,
+        area_name: str = '',
+        pc_rect: Rect | None = None,
+        text: Optional[str] = '',
+        lcs_percent: float = 0.5,
+        template_id: Optional[str] = '',
+        template_sub_dir: Optional[str] = '',
+        template_match_threshold: float = 0.7,
+        pc_alt: bool = False,
+        id_mark: bool = False,
+        goto_list: Optional[list[str]] = None,
+        color_range: Optional[list[list[int]]] = None,
+    ):
         self.area_name: str = area_name
         self.pc_rect: Rect = pc_rect
         self.text: Optional[str] = text
@@ -29,8 +31,8 @@ class ScreenArea:
         self.template_match_threshold: float = template_match_threshold
         self.pc_alt: bool = pc_alt  # PC端需要使用ALT后才能点击
         self.id_mark: bool = id_mark  # 是否用于画面的唯一标识
-        self.goto_list: List[str] = [] if goto_list is None else goto_list # 交互后 可能会跳转的画面名称列表
-        self.color_range: List[List[int]] = color_range  # 识别时候的筛选的颜色范围 文本时候有效
+        self.goto_list: list[str] = [] if goto_list is None else goto_list  # 交互后 可能会跳转的画面名称列表
+        self.color_range: Optional[list[list[int]]] = color_range  # 识别时候的筛选的颜色范围 文本时候有效
 
     @property
     def rect(self) -> Rect:
@@ -43,6 +45,10 @@ class ScreenArea:
     @property
     def left_top(self) -> Point:
         return self.rect.left_top
+
+    @property
+    def right_bottom(self) -> Point:
+        return self.rect.right_bottom
 
     @property
     def x1(self) -> int:
@@ -106,24 +112,20 @@ class ScreenArea:
         return self.template_id is not None and len(self.template_id) > 0
 
     @property
-    def color_range_lower(self) -> np.array:
+    def color_range_lower(self) -> np.ndarray:
         if self.color_range is None or len(self.color_range) < 1:
             return np.array([0, 0, 0], dtype=np.uint8)
         else:
             return np.array(self.color_range[0], dtype=np.uint8)
 
     @property
-    def color_range_upper(self) -> np.array:
+    def color_range_upper(self) -> np.ndarray:
         if self.color_range is None or len(self.color_range) < 2:
             return np.array([255, 255, 255], dtype=np.uint8)
         else:
             return np.array(self.color_range[1], dtype=np.uint8)
 
-    def to_order_dict(self) -> dict:
-        """
-        有顺序的dict 用于保存时候展示
-        :return:
-        """
+    def to_dict(self) -> dict:
         order_dict = dict()
         order_dict['area_name'] = self.area_name
         order_dict['id_mark'] = self.id_mark
